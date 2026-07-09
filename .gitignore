@@ -1,0 +1,76 @@
+# ===========================
+# Career-OS .gitignore
+# ===========================
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+*.whl
+pip-wheel-metadata/
+
+# Virtuelle Umgebungen
+.venv/
+venv/
+ENV/
+env/
+
+# Umgebungsvariablen
+.env
+.env.*
+!.env.example
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+
+# Typ-Pruefung
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pytype/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.settings/
+
+# OS
+.DS_Store
+Thumbs.db
+*.log
+
+# Docker
+docker-volumes/
+*.env.docker
+
+# Datenbank
+*.sqlite3
+*.db
+
+# Build-Artefakte
+*.tar.gz
+*.zip
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+
+# Secrets
+*.pem
+*.key
+*.crt

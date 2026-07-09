@@ -1,0 +1,70 @@
+# Alpine Career — Docker Compose (MVP)
+# Startet PostgreSQL, Redis und die Bot-Applikation.
+
+services:
+  # --- App (Telegram Bot) ---
+  app:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile
+    container_name: alpine-career-app
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./src:/app/src
+      - app-data:/app/data
+    networks:
+      - alpine-career-network
+    restart: unless-stopped
+
+  # --- PostgreSQL ---
+  postgres:
+    image: postgres:16-alpine
+    container_name: alpine-career-postgres
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-alpine_career}
+      POSTGRES_USER: ${POSTGRES_USER:-alpine_career}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD muss gesetzt sein}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-alpine_career} -d ${POSTGRES_DB:-alpine_career}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - alpine-career-network
+    restart: unless-stopped
+
+  # --- Redis ---
+  redis:
+    image: redis:7-alpine
+    container_name: alpine-career-redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - alpine-career-network
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  redis-data:
+  app-data:
+
+networks:
+  alpine-career-network:
+    driver: bridge
