@@ -9,7 +9,7 @@ WORKDIR /app
 
 # Dependencies installieren
 COPY pyproject.toml .
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir hatchling && pip install --no-cache-dir .
 
 # Source Code kopieren
 COPY src/ src/
