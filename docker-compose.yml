@@ -27,7 +27,7 @@ services:
     image: postgres:16-alpine
     container_name: alpine-career-postgres
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-alpine_career}
       POSTGRES_USER: ${POSTGRES_USER:-alpine_career}
@@ -48,7 +48,7 @@ services:
     image: redis:7-alpine
     container_name: alpine-career-redis
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     volumes:
       - redis-data:/data
     healthcheck:

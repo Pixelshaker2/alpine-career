@@ -1,6 +1,6 @@
 #!/bin/bash
-# Alpine Career — Ersteinrichtung Hetzner VPS (Ubuntu 22.04)
-# Nutzung: ssh root@SERVER < setup-server.sh
+# Alpine Career — Ersteinrichtung Hetzner VPS (Ubuntu 26.04 / CPX12)
+# Nutzung: ssh root@46.224.126.55 < setup-server.sh
 
 set -euo pipefail
 
@@ -27,9 +27,9 @@ ufw default allow outgoing
 ufw allow ssh
 ufw --force enable
 
-# Swap (4 GB fuer CX22 mit 4 GB RAM)
+# Swap (2 GB fuer CPX12 mit 2 GB RAM)
 if [ ! -f /swapfile ]; then
-    fallocate -l 4G /swapfile
+    fallocate -l 2G /swapfile
     chmod 600 /swapfile
     mkswap /swapfile
     swapon /swapfile

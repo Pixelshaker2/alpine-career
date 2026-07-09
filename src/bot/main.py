@@ -5,7 +5,7 @@ import logging
 import structlog
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
 
-from src.bot.handlers import cmd_help, cmd_profil, cmd_start, cmd_status, handle_unknown
+from src.bot.handlers import cmd_botstatus, cmd_help, cmd_profil, cmd_start, handle_unknown
 from src.core.config import settings
 
 
@@ -60,7 +60,7 @@ def main() -> None:
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("hilfe", cmd_help))
-    app.add_handler(CommandHandler("status", cmd_status))
+    app.add_handler(CommandHandler("botstatus", cmd_botstatus))
     app.add_handler(CommandHandler("profil", cmd_profil))
 
     # Unknown commands

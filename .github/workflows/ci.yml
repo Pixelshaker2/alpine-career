@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: alpine_career_test
+          POSTGRES_USER: alpine_career
+          POSTGRES_PASSWORD: testpass
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U alpine_career -d alpine_career_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Dependencies installieren
+        run: |
+          pip install -e ".[dev,test]"
+
+      - name: Linting (Ruff)
+        run: |
+          ruff check src/ tests/
+          ruff format --check src/ tests/
+
+      - name: Type-Check (mypy)
+        run: |
+          mypy src/ --ignore-missing-imports
+
+      - name: Tests
+        env:
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5432
+          POSTGRES_DB: alpine_career_test
+          POSTGRES_USER: alpine_career
+          POSTGRES_PASSWORD: testpass
+          APP_ENV: test
+          TELEGRAM_BOT_TOKEN: fake-token-for-ci
+          ANTHROPIC_API_KEY: fake-key-for-ci
+        run: |
+          pytest --cov=src --cov-report=term-missing

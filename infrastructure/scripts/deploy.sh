@@ -11,7 +11,7 @@ set -euo pipefail
 
 SERVER="${1:?Bitte Server-IP angeben: ./deploy.sh 1.2.3.4}"
 DEPLOY_DIR="/opt/alpine-career"
-REPO_URL="git@github.com:GITHUB_USER/alpine-career.git"
+REPO_URL="https://github.com/Pixelshaker2/alpine-career.git"
 
 echo "=== Alpine Career Deploy ==="
 echo "Server: $SERVER"
@@ -22,14 +22,23 @@ ssh "root@$SERVER" bash <<EOF
 set -euo pipefail
 
 # Repo klonen oder aktualisieren
-if [ -d "$DEPLOY_DIR" ]; then
+if [ -d "$DEPLOY_DIR/.git" ]; then
     echo ">> Repository aktualisieren..."
     cd $DEPLOY_DIR
     git pull origin main
 else
     echo ">> Repository klonen..."
+    # .env sichern falls vorhanden
+    if [ -f "$DEPLOY_DIR/.env" ]; then
+        cp $DEPLOY_DIR/.env /tmp/.env.deploy.bak
+    fi
+    rm -rf $DEPLOY_DIR
     git clone $REPO_URL $DEPLOY_DIR
     cd $DEPLOY_DIR
+    # .env wiederherstellen
+    if [ -f /tmp/.env.deploy.bak ]; then
+        mv /tmp/.env.deploy.bak $DEPLOY_DIR/.env
+    fi
 fi
 
 # .env pruefen
