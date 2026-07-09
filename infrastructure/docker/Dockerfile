@@ -8,8 +8,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # Dependencies installieren
-COPY pyproject.toml .
-RUN pip install --no-cache-dir hatchling && pip install --no-cache-dir --no-build-isolation .
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Source Code kopieren
 COPY src/ src/
