@@ -223,13 +223,23 @@ async def cmd_suche(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         str(i + 1): str(job.id) for i, (job, _score) in enumerate(scored[:20])
     }
 
-    lines = [f"📋 {len(scored)} Stellen gefunden in {region_label}:\n"]
+    # Quellen zaehlen
+    sources = {}
+    for job, _ in scored:
+        sources[job.source] = sources.get(job.source, 0) + 1
+    source_info = ", ".join(f"{s}: {c}" for s, c in sorted(sources.items()))
+
+    lines = [
+        f"📋 {len(scored)} Stellen gefunden in {region_label}\n"
+        f"🔎 Quellen: {source_info}\n"
+    ]
     for i, (job, match_score) in enumerate(scored[:20], 1):
         salary = f" | {job.salary_range}" if job.salary_range else ""
         score_bar = "🟢" if match_score >= 60 else "🟡" if match_score >= 30 else "🔴"
+        src_tag = job.source[:3].upper()
         lines.append(
             f"{i}. {score_bar} {job.title} ({match_score:.0f}%)\n"
-            f"   🏢 {job.company} | 📍 {job.location}{salary}"
+            f"   🏢 {job.company} | 📍 {job.location} | 🌐 {src_tag}{salary}"
         )
 
     lines.append(f"\nTippe /detail [Nr] fuer Details (z.B. /detail 1)")

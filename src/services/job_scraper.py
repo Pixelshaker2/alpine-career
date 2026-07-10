@@ -1,225 +1,111 @@
-"""Job scraper service — fetches jobs from Indeed and LinkedIn.
+"""Job scraper orchestrator — combines multiple job sources.
 
-Uses python-jobspy library (no API key required).
-Indeed: best scraper, no rate limiting.
-LinkedIn: global search via location parameter.
-Results are stored in the jobs table and cached in Redis.
+Sources:
+- JobSpy (Indeed + LinkedIn) — primary, no API key needed
+- SwissDevJobs.ch — JSON API, Swiss IT jobs with salary
+- Berlin Startup Jobs — HTML scraping, Berlin startup scene
+- CH Media Portals — HTML scraping (zentraljob.ch, jobzueri.ch, jobbern.ch, jobbasel.ch)
+
+All sources run concurrently. Results are deduplicated by external_id.
 """
 
 import asyncio
-import hashlib
 import logging
-from dataclasses import dataclass
-from datetime import datetime, timezone
 
-from jobspy import scrape_jobs as _scrape_jobs
+from src.services.scrapers.base import ScrapedJob
+from src.services.scrapers.berlin_startups_scraper import search_berlin_startups
+from src.services.scrapers.jobspy_scraper import search_jobspy
+from src.services.scrapers.swissdevjobs_scraper import search_swissdevjobs
+from src.services.scrapers.zentraljob_scraper import search_chmedia_portals
 
 logger = logging.getLogger(__name__)
 
-# Marcos Zielrollen als Suchbegriffe
-SEARCH_TERMS = [
-    "System Administrator Azure",
-    "Cloud Administrator Microsoft 365",
-    "IT Administrator Azure",
-    "Modern Workplace Engineer",
-]
-
-# Regionen-Konfiguration
-REGION_CONFIG = {
-    "berlin": {
-        "searches": [
-            {
-                "location": "Berlin, Germany",
-                "country_indeed": "Germany",
-            },
-        ],
-    },
-    "schweiz": {
-        "searches": [
-            {
-                "location": "Zürich, Schweiz",
-                "country_indeed": "Switzerland",
-            },
-            {
-                "location": "Bern, Schweiz",
-                "country_indeed": "Switzerland",
-            },
-            {
-                "location": "Basel, Schweiz",
-                "country_indeed": "Switzerland",
-            },
-            {
-                "location": "Luzern, Schweiz",
-                "country_indeed": "Switzerland",
-            },
-        ],
-    },
-}
-
-
-@dataclass
-class ScrapedJob:
-    """A job fetched from an external source."""
-
-    external_id: str
-    source: str
-    title: str
-    company: str
-    location: str
-    description: str
-    url: str
-    salary_range: str | None
-    scraped_at: datetime
-
-
-def _make_external_id(source: str, url: str, title: str) -> str:
-    """Create a stable external ID from job data."""
-    raw = f"{source}:{url}:{title}"
-    return hashlib.sha256(raw.encode()).hexdigest()[:32]
-
-
-def _scrape_region(
-    search_term: str,
-    location: str,
-    country_indeed: str,
-    results_wanted: int = 10,
-) -> list[ScrapedJob]:
-    """Run a single JobSpy scrape (synchronous).
-
-    Args:
-        search_term: Job search query.
-        location: Location string (e.g. "Berlin, Germany").
-        country_indeed: Country for Indeed (e.g. "Germany").
-        results_wanted: Max results per site.
-
-    Returns:
-        List of ScrapedJob objects.
-    """
-    jobs: list[ScrapedJob] = []
-
-    try:
-        df = _scrape_jobs(
-            site_name=["indeed", "linkedin"],
-            search_term=search_term,
-            location=location,
-            country_indeed=country_indeed,
-            results_wanted=results_wanted,
-            hours_old=72,
-            verbose=0,
-        )
-
-        if df is None or df.empty:
-            return jobs
-
-        now = datetime.now(timezone.utc)
-
-        for _, row in df.iterrows():
-            title = str(row.get("title", "Unbekannt"))
-            company = str(row.get("company", "Unbekannt"))
-            job_url = str(row.get("job_url", ""))
-            site = str(row.get("site", "unknown"))
-            city = str(row.get("city", ""))
-            state = str(row.get("state", ""))
-            description = str(row.get("description", ""))
-
-            # Standort zusammenbauen
-            loc_parts = [p for p in [city, state] if p and p != "nan"]
-            job_location = ", ".join(loc_parts) if loc_parts else location
-
-            # Gehalt formatieren
-            salary_range = None
-            min_amount = row.get("min_amount")
-            max_amount = row.get("max_amount")
-            currency = row.get("currency", "")
-            if min_amount and max_amount and str(min_amount) != "nan":
-                try:
-                    currency_str = str(currency) if str(currency) != "nan" else ""
-                    salary_range = (
-                        f"{int(float(min_amount)):,}–"
-                        f"{int(float(max_amount)):,} {currency_str}".strip()
-                    )
-                except (ValueError, TypeError):
-                    pass
-
-            external_id = _make_external_id(site, job_url, title)
-
-            jobs.append(
-                ScrapedJob(
-                    external_id=external_id,
-                    source=site,
-                    title=title,
-                    company=company,
-                    location=job_location,
-                    description=description[:5000] if description else "",
-                    url=job_url,
-                    salary_range=salary_range,
-                    scraped_at=now,
-                )
-            )
-
-    except Exception as exc:
-        logger.error(
-            "JobSpy scrape failed",
-            extra={
-                "error": str(exc),
-                "location": location,
-                "search_term": search_term,
-            },
-        )
-
-    return jobs
+# Re-export fuer Abwaertskompatibilitaet
+__all__ = ["ScrapedJob", "search_jobs"]
 
 
 async def search_jobs(
     region: str | None = None,
     max_per_search: int = 10,
 ) -> list[ScrapedJob]:
-    """Search for jobs matching Marcos profile.
+    """Search all sources for jobs matching Marcos profile.
+
+    Runs all applicable scrapers concurrently and deduplicates results.
 
     Args:
-        region: Optional filter — "berlin", "schweiz", or None for both.
-        max_per_search: Max results per site per search.
+        region: "berlin", "schweiz", or None for both.
+        max_per_search: Max results per source per search.
 
     Returns:
-        Combined list of ScrapedJob objects, deduplicated.
+        Combined, deduplicated list of ScrapedJob objects.
     """
-    all_jobs: list[ScrapedJob] = []
-    seen_ids: set[str] = set()
+    tasks: list[asyncio.Task[list[ScrapedJob]]] = []
 
-    regions = []
-    if region == "berlin" or region is None:
-        regions.append("berlin")
+    # JobSpy laeuft immer (Indeed + LinkedIn)
+    tasks.append(
+        asyncio.create_task(
+            search_jobspy(region=region, max_per_search=max_per_search),
+            name="jobspy",
+        )
+    )
+
+    # Schweiz-spezifische Quellen
     if region == "schweiz" or region is None:
-        regions.append("schweiz")
-
-    for reg in regions:
-        config = REGION_CONFIG[reg]
-        for search_cfg in config["searches"]:
-            # Verwende den ersten Suchbegriff (breiteste Abdeckung)
-            search_term = SEARCH_TERMS[0]
-            scraped = await asyncio.to_thread(
-                _scrape_region,
-                search_term=search_term,
-                location=search_cfg["location"],
-                country_indeed=search_cfg["country_indeed"],
-                results_wanted=max_per_search,
+        tasks.append(
+            asyncio.create_task(
+                search_swissdevjobs(),
+                name="swissdevjobs",
             )
-
-            for job in scraped:
-                if job.external_id not in seen_ids:
-                    seen_ids.add(job.external_id)
-                    all_jobs.append(job)
-
-            logger.info(
-                "Region search completed",
-                extra={
-                    "location": search_cfg["location"],
-                    "results": len(scraped),
-                },
+        )
+        tasks.append(
+            asyncio.create_task(
+                search_chmedia_portals(),
+                name="chmedia",
             )
+        )
+
+    # Berlin-spezifische Quellen
+    if region == "berlin" or region is None:
+        tasks.append(
+            asyncio.create_task(
+                search_berlin_startups(max_pages=2),
+                name="berlinstartups",
+            )
+        )
+
+    # Alle parallel ausfuehren, Fehler einzeln abfangen
+    all_jobs: list[ScrapedJob] = []
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    for task, result in zip(tasks, results):
+        source_name = task.get_name()
+        if isinstance(result, Exception):
+            logger.error(
+                "Source failed",
+                extra={"source": source_name, "error": str(result)},
+            )
+            continue
+        logger.info(
+            "Source completed",
+            extra={"source": source_name, "count": len(result)},
+        )
+        all_jobs.extend(result)
+
+    # Deduplizierung nach external_id
+    seen: set[str] = set()
+    unique_jobs: list[ScrapedJob] = []
+    for job in all_jobs:
+        if job.external_id not in seen:
+            seen.add(job.external_id)
+            unique_jobs.append(job)
 
     logger.info(
-        "Job search completed",
-        extra={"region": region or "all", "total": len(all_jobs)},
+        "Multi-source search completed",
+        extra={
+            "region": region or "all",
+            "total_raw": len(all_jobs),
+            "unique": len(unique_jobs),
+            "sources": len(tasks),
+        },
     )
-    return all_jobs
+    return unique_jobs
