@@ -59,6 +59,10 @@ class Settings(BaseSettings):
         """Komma-getrennte Usernames als Liste."""
         return [u.strip() for u in self.telegram_allowed_usernames.split(",") if u.strip()]
 
+    # --- Adzuna API ---
+    adzuna_app_id: str = Field(default="")
+    adzuna_app_key: str = Field(default="")
+
     # --- Claude API ---
     anthropic_api_key: str = Field(default="")
     anthropic_model: str = "claude-sonnet-4-20250514"
