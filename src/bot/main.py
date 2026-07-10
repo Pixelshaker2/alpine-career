@@ -13,11 +13,13 @@ from telegram.ext import (
 )
 
 from src.bot.handlers import (
+    cmd_ahv,
     cmd_bewerben,
     cmd_bewerbungen,
     cmd_botstatus,
     cmd_detail,
     cmd_help,
+    cmd_nachweis,
     cmd_profil,
     cmd_senden,
     cmd_start,
@@ -92,6 +94,9 @@ def main() -> None:
     app.add_handler(CommandHandler("bewerbungen", cmd_bewerbungen))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("stats", cmd_stats))
+    app.add_handler(CommandHandler("nachweis", cmd_nachweis))
+    app.add_handler(CommandHandler("rav", cmd_nachweis))
+    app.add_handler(CommandHandler("ahv", cmd_ahv))
 
     # Unknown commands
     app.add_handler(MessageHandler(filters.COMMAND, handle_unknown))

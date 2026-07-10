@@ -21,6 +21,7 @@ from src.services.application_service import (
 )
 from src.services.job_matcher import score_job, score_jobs
 from src.services.job_service import search_and_persist
+from src.services.rav_service import render_monthly_overview, render_rav_nachweis
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +76,8 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/bewerbungen — Alle Bewerbungen\n"
         "/status \\[id\\] \\[s\\] — Status aendern\n"
         "/stats — Statistik\n"
+        "/nachweis \\[monat\\] — RAV\\-Formular\n"
+        "/ahv \\[nr\\] — AHV\\-Nr\\. setzen\n"
     )
     await update.message.reply_text(help_text, parse_mode="MarkdownV2")
 
@@ -761,6 +764,154 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
     await update.message.reply_text(text)
+
+
+@restricted
+async def cmd_nachweis(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Handle /nachweis [monat] — generate RAV form + monthly overview."""
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
+
+    # Monat aus Argument oder aktueller Monat
+    if context.args:
+        try:
+            arg = context.args[0]
+            if "." in arg:
+                # Format: 07.2026 oder 7.2026
+                parts = arg.split(".")
+                month = int(parts[0])
+                year = int(parts[1])
+            else:
+                month = int(arg)
+                year = now.year
+        except (ValueError, IndexError):
+            await update.message.reply_text(
+                "Format: /nachweis 7 oder /nachweis 07.2026"
+            )
+            return
+    else:
+        month = now.month
+        year = now.year
+
+    if not (1 <= month <= 12):
+        await update.message.reply_text("Unguelter Monat (1-12).")
+        return
+
+    MONTHS_DE = [
+        "", "Januar", "Februar", "Maerz", "April", "Mai", "Juni",
+        "Juli", "August", "September", "Oktober", "November", "Dezember",
+    ]
+
+    await update.message.reply_text(
+        f"📋 Erstelle RAV-Nachweis fuer {MONTHS_DE[month]} {year}..."
+    )
+
+    user = await _get_or_create_user(update)
+    if not user:
+        await update.message.reply_text("Nutzer nicht gefunden.")
+        return
+
+    # Bewerbungen des Monats laden
+    from sqlalchemy import extract
+
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(Application)
+            .where(
+                Application.user_id == user.id,
+                extract("month", Application.created_at) == month,
+                extract("year", Application.created_at) == year,
+            )
+            .order_by(Application.created_at.asc())
+        )
+        apps = list(result.scalars().all())
+
+        # Jobs nachladen
+        app_job_pairs: list[tuple[Application, Job]] = []
+        for app in apps:
+            job = await session.get(Job, app.job_id)
+            if job:
+                app_job_pairs.append((app, job))
+
+    # Marcos AHV-Nummer muss er selbst angeben — Platzhalter
+    ahv_nr = context.user_data.get("ahv_nr", "756.____.____.__)
+
+    # RAV-Formular generieren
+    try:
+        rav_pdf = render_rav_nachweis(
+            applications=app_job_pairs,
+            name=user.name,
+            ahv_nr=ahv_nr,
+            month=month,
+            year=year,
+        )
+
+        overview_pdf = render_monthly_overview(
+            applications=app_job_pairs,
+            name=user.name,
+            month=month,
+            year=year,
+        )
+    except Exception:
+        logger.exception("RAV PDF generation failed")
+        await update.message.reply_text(
+            "❌ Fehler bei der PDF-Erstellung."
+        )
+        return
+
+    # PDFs senden
+    month_str = f"{month:02d}_{year}"
+
+    rav_file = io.BytesIO(rav_pdf)
+    rav_file.name = f"RAV_Nachweis_{month_str}.pdf"
+
+    overview_file = io.BytesIO(overview_pdf)
+    overview_file.name = f"Bewerbungsuebersicht_{month_str}.pdf"
+
+    await update.message.reply_document(
+        document=rav_file,
+        caption=f"📋 RAV-Nachweis {MONTHS_DE[month]} {year} "
+        f"({len(app_job_pairs)} Bewerbungen)",
+    )
+
+    await update.message.reply_document(
+        document=overview_file,
+        caption=f"📊 Bewerbungsuebersicht {MONTHS_DE[month]} {year}",
+    )
+
+    if not app_job_pairs:
+        await update.message.reply_text(
+            f"Keine Bewerbungen im {MONTHS_DE[month]} gefunden.\n"
+            "Die Formulare sind leer — du kannst sie manuell ausfuellen."
+        )
+    else:
+        await update.message.reply_text(
+            f"✅ {len(app_job_pairs)} Bewerbungen eingetragen.\n\n"
+            "Hinweis: AHV-Nr. ist ein Platzhalter. "
+            "Bitte vor der Abgabe manuell ergaenzen oder "
+            "mit /ahv 756.xxxx.xxxx.xx setzen."
+        )
+
+
+@restricted
+async def cmd_ahv(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Handle /ahv [nummer] — set AHV number for RAV forms."""
+    if not context.args:
+        current = context.user_data.get("ahv_nr", "Nicht gesetzt")
+        await update.message.reply_text(
+            f"AHV-Nr.: {current}\n\n"
+            "Setzen mit: /ahv 756.1234.5678.90"
+        )
+        return
+
+    ahv_nr = " ".join(context.args)
+    context.user_data["ahv_nr"] = ahv_nr
+    await update.message.reply_text(f"✅ AHV-Nr. gespeichert: {ahv_nr}")
 
 
 async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
