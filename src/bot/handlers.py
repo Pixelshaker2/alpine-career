@@ -1,6 +1,8 @@
 """Telegram bot command handlers."""
 
+import io
 import logging
+import uuid as uuid_mod
 
 from sqlalchemy import select
 from telegram import Update
@@ -8,9 +10,14 @@ from telegram.ext import ContextTypes
 
 from src.bot.auth import restricted
 from src.core.database import async_session_factory
+from src.models.application import Application
 from src.models.job import Job
 from src.models.profile import Profile
 from src.models.user import User
+from src.services.application_service import (
+    create_application,
+    get_application_by_job,
+)
 from src.services.job_matcher import score_job, score_jobs
 from src.services.job_service import search_and_persist
 
@@ -300,6 +307,289 @@ async def cmd_detail(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     )
 
     await update.message.reply_text(text)
+
+
+@restricted
+async def cmd_bewerben(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /bewerben [nr] — generate CV + cover letter for a job."""
+    if not context.args:
+        await update.message.reply_text(
+            "Bitte eine Nummer angeben: /bewerben 1\n"
+            "(Nummern aus der letzten /suche)"
+        )
+        return
+
+    nr = context.args[0]
+    search_map = context.user_data.get("last_search", {})
+
+    if nr not in search_map:
+        await update.message.reply_text(
+            f"Nr. {nr} nicht gefunden. Starte zuerst eine /suche."
+        )
+        return
+
+    job_id = uuid_mod.UUID(search_map[nr])
+    user = await _get_or_create_user(update)
+    if not user:
+        await update.message.reply_text("Nutzer nicht gefunden.")
+        return
+
+    # Pruefen ob Bewerbung schon existiert
+    existing = await get_application_by_job(user.id, job_id)
+    if existing:
+        await update.message.reply_text(
+            "Fuer diese Stelle existiert bereits eine Bewerbung.\n"
+            f"Status: {existing.status}\n\n"
+            "Nutze /vorschau um die Dokumente anzusehen."
+        )
+        return
+
+    await update.message.reply_text(
+        "🤖 Generiere CV und Anschreiben...\n"
+        "Das dauert ca. 30–60 Sekunden."
+    )
+
+    try:
+        application = await create_application(
+            user_id=user.id,
+            job_id=job_id,
+        )
+    except ValueError as exc:
+        await update.message.reply_text(f"❌ {exc}")
+        return
+    except Exception:
+        logger.exception("Application generation failed")
+        await update.message.reply_text(
+            "❌ Fehler bei der Generierung. Bitte versuche es spaeter nochmal."
+        )
+        return
+
+    # Job-Titel laden fuer die Ausgabe
+    async with async_session_factory() as session:
+        job = await session.get(Job, job_id)
+
+    job_title = job.title if job else "Unbekannt"
+
+    # Bewerbungs-ID in context speichern
+    context.user_data.setdefault("applications", {})[nr] = str(application.id)
+
+    await update.message.reply_text(
+        f"✅ Bewerbung fuer «{job_title}» erstellt!\n\n"
+        f"📄 CV: optimiert und als PDF generiert\n"
+        f"✉️ Anschreiben: erstellt und als PDF generiert\n"
+        f"📧 Betreff: {application.email_subject}\n\n"
+        f"Naechste Schritte:\n"
+        f"  /vorschau {nr} — PDFs ansehen\n"
+        f"  /senden {nr} — Per Gmail versenden"
+    )
+
+
+@restricted
+async def cmd_vorschau(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /vorschau [nr] — send CV and cover letter PDFs in chat."""
+    if not context.args:
+        await update.message.reply_text(
+            "Bitte eine Nummer angeben: /vorschau 1"
+        )
+        return
+
+    nr = context.args[0]
+
+    # Versuche Application via gespeicherter ID oder ueber Suchindex
+    app_map = context.user_data.get("applications", {})
+    search_map = context.user_data.get("last_search", {})
+
+    application = None
+    user = await _get_or_create_user(update)
+    if not user:
+        await update.message.reply_text("Nutzer nicht gefunden.")
+        return
+
+    if nr in app_map:
+        async with async_session_factory() as session:
+            result = await session.execute(
+                select(Application).where(Application.id == app_map[nr])
+            )
+            application = result.scalar_one_or_none()
+    elif nr in search_map:
+        application = await get_application_by_job(
+            user.id, uuid_mod.UUID(search_map[nr])
+        )
+
+    if not application:
+        await update.message.reply_text(
+            f"Keine Bewerbung fuer Nr. {nr} gefunden.\n"
+            "Erstelle zuerst eine mit /bewerben."
+        )
+        return
+
+    if not application.cv_pdf or not application.cover_letter_pdf:
+        await update.message.reply_text(
+            "Dokumente noch nicht generiert. Bitte /bewerben ausfuehren."
+        )
+        return
+
+    # Job-Titel laden
+    async with async_session_factory() as session:
+        job = await session.get(Job, application.job_id)
+    job_title = job.title if job else "Stelle"
+    company = job.company if job else "Unbekannt"
+
+    # PDFs als Telegram-Dokumente senden
+    cv_file = io.BytesIO(application.cv_pdf)
+    cv_file.name = f"CV_{user.name.replace(' ', '_')}_{company}.pdf"
+
+    letter_file = io.BytesIO(application.cover_letter_pdf)
+    letter_file.name = f"Anschreiben_{user.name.replace(' ', '_')}_{company}.pdf"
+
+    await update.message.reply_text(
+        f"📄 Dokumente fuer: {job_title} bei {company}"
+    )
+
+    await update.message.reply_document(
+        document=cv_file,
+        caption="📄 Lebenslauf (optimiert)",
+    )
+
+    await update.message.reply_document(
+        document=letter_file,
+        caption="✉️ Bewerbungsanschreiben",
+    )
+
+    await update.message.reply_text(
+        f"Zufrieden? Dann sende mit /senden {nr}\n"
+        "Oder generiere neu mit /bewerben."
+    )
+
+
+@restricted
+async def cmd_senden(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /senden [nr] — send application via Gmail (with confirmation)."""
+    if not context.args:
+        await update.message.reply_text(
+            "Bitte eine Nummer angeben: /senden 1"
+        )
+        return
+
+    nr = context.args[0]
+
+    # Bestaetigungslogik: erst Vorschau, dann Freigabe
+    pending_send = context.user_data.get("pending_send")
+
+    if pending_send and pending_send.get("nr") == nr:
+        # Zweiter Aufruf = Bestaetigung
+        if len(context.args) > 1 and context.args[1].lower() == "ja":
+            # Gmail-Versand ausfuehren
+            try:
+                from src.services.gmail_service import send_application_email
+
+                application_id = pending_send["application_id"]
+                async with async_session_factory() as session:
+                    result = await session.execute(
+                        select(Application).where(
+                            Application.id == application_id
+                        )
+                    )
+                    application = result.scalar_one_or_none()
+
+                    if not application:
+                        await update.message.reply_text(
+                            "Bewerbung nicht gefunden."
+                        )
+                        return
+
+                    job = await session.get(Job, application.job_id)
+
+                await send_application_email(application, job)
+
+                # Status aktualisieren
+                from datetime import datetime, timezone
+
+                async with async_session_factory() as session:
+                    app = await session.get(Application, application_id)
+                    app.status = "sent"
+                    app.sent_at = datetime.now(timezone.utc)
+                    await session.commit()
+
+                context.user_data.pop("pending_send", None)
+
+                await update.message.reply_text(
+                    "✅ Bewerbung gesendet!\n\n"
+                    f"📧 An: {application.email_to or 'Empfaenger'}\n"
+                    f"📋 Betreff: {application.email_subject}\n"
+                    f"📎 Anhaenge: CV + Anschreiben als PDF\n\n"
+                    "Der Status wurde auf «sent» gesetzt."
+                )
+                return
+
+            except ImportError:
+                await update.message.reply_text(
+                    "❌ Gmail-Service noch nicht konfiguriert.\n"
+                    "Die Gmail API Integration kommt in Kuerze."
+                )
+                context.user_data.pop("pending_send", None)
+                return
+            except Exception:
+                logger.exception("Gmail send failed")
+                await update.message.reply_text(
+                    "❌ Fehler beim E-Mail-Versand. "
+                    "Bitte pruefe die Gmail-Konfiguration."
+                )
+                context.user_data.pop("pending_send", None)
+                return
+        else:
+            context.user_data.pop("pending_send", None)
+            await update.message.reply_text("Versand abgebrochen.")
+            return
+
+    # Erster Aufruf: Bewerbung laden und Bestaetigung anfordern
+    app_map = context.user_data.get("applications", {})
+    search_map = context.user_data.get("last_search", {})
+
+    user = await _get_or_create_user(update)
+    if not user:
+        return
+
+    application = None
+    if nr in app_map:
+        async with async_session_factory() as session:
+            result = await session.execute(
+                select(Application).where(Application.id == app_map[nr])
+            )
+            application = result.scalar_one_or_none()
+    elif nr in search_map:
+        application = await get_application_by_job(
+            user.id, uuid_mod.UUID(search_map[nr])
+        )
+
+    if not application or not application.cv_pdf:
+        await update.message.reply_text(
+            f"Keine fertige Bewerbung fuer Nr. {nr}.\n"
+            "Erstelle zuerst eine mit /bewerben."
+        )
+        return
+
+    async with async_session_factory() as session:
+        job = await session.get(Job, application.job_id)
+
+    job_title = job.title if job else "Stelle"
+    company = job.company if job else "Unbekannt"
+
+    # Pending speichern und Bestaetigung anfordern
+    context.user_data["pending_send"] = {
+        "nr": nr,
+        "application_id": str(application.id),
+    }
+
+    await update.message.reply_text(
+        f"⚠️ Bewerbung versenden?\n\n"
+        f"📌 Stelle: {job_title}\n"
+        f"🏢 Firma: {company}\n"
+        f"📧 Betreff: {application.email_subject}\n"
+        f"📎 Anhaenge: CV + Anschreiben (PDF)\n\n"
+        f"Zum Bestaetigen: /senden {nr} ja\n"
+        f"Zum Abbrechen: /senden {nr} nein"
+    )
 
 
 async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

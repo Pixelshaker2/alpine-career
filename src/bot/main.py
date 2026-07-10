@@ -6,12 +6,15 @@ import structlog
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
 
 from src.bot.handlers import (
+    cmd_bewerben,
     cmd_botstatus,
     cmd_detail,
     cmd_help,
     cmd_profil,
+    cmd_senden,
     cmd_start,
     cmd_suche,
+    cmd_vorschau,
     handle_unknown,
 )
 from src.core.config import settings
@@ -72,6 +75,9 @@ def main() -> None:
     app.add_handler(CommandHandler("profil", cmd_profil))
     app.add_handler(CommandHandler("suche", cmd_suche))
     app.add_handler(CommandHandler("detail", cmd_detail))
+    app.add_handler(CommandHandler("bewerben", cmd_bewerben))
+    app.add_handler(CommandHandler("vorschau", cmd_vorschau))
+    app.add_handler(CommandHandler("senden", cmd_senden))
 
     # Unknown commands
     app.add_handler(MessageHandler(filters.COMMAND, handle_unknown))
