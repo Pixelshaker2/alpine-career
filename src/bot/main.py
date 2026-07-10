@@ -3,20 +3,31 @@
 import logging
 
 import structlog
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
+from telegram import Update
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
 from src.bot.handlers import (
     cmd_bewerben,
+    cmd_bewerbungen,
     cmd_botstatus,
     cmd_detail,
     cmd_help,
     cmd_profil,
     cmd_senden,
     cmd_start,
+    cmd_stats,
+    cmd_status,
     cmd_suche,
     cmd_vorschau,
     handle_unknown,
 )
+from src.bot.scheduled import register_scheduled_jobs
 from src.core.config import settings
 
 
@@ -78,9 +89,36 @@ def main() -> None:
     app.add_handler(CommandHandler("bewerben", cmd_bewerben))
     app.add_handler(CommandHandler("vorschau", cmd_vorschau))
     app.add_handler(CommandHandler("senden", cmd_senden))
+    app.add_handler(CommandHandler("bewerbungen", cmd_bewerbungen))
+    app.add_handler(CommandHandler("status", cmd_status))
+    app.add_handler(CommandHandler("stats", cmd_stats))
 
     # Unknown commands
     app.add_handler(MessageHandler(filters.COMMAND, handle_unknown))
+
+    # Global error handler
+    async def error_handler(
+        update: object, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Log errors and notify user."""
+        logger.error(
+            "Bot error",
+            error=str(context.error),
+            exc_info=context.error,
+        )
+        if isinstance(update, Update) and update.effective_message:
+            try:
+                await update.effective_message.reply_text(
+                    "❌ Ein unerwarteter Fehler ist aufgetreten. "
+                    "Bitte versuche es spaeter nochmal."
+                )
+            except Exception:
+                pass  # Wenn auch die Fehlermeldung scheitert
+
+    app.add_error_handler(error_handler)
+
+    # Scheduled tasks (taegliche Jobsuche)
+    register_scheduled_jobs(app)
 
     logger.info("Bot laeuft — warte auf Nachrichten")
     app.run_polling(drop_pending_updates=True)

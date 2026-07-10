@@ -1,14 +1,8 @@
 FROM python:3.12-slim
 
-# System-Dependencies: WeasyPrint (PDF-Generierung) benoetigt cairo + pango
+# System-Dependencies (minimal — PDF via fpdf2, kein WeasyPrint noetig)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libffi-dev \
-    libcairo2 \
-    libpango-1.0-0 \
-    libpangocairo-1.0-0 \
-    libgdk-pixbuf2.0-0 \
-    libglib2.0-0 \
-    fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

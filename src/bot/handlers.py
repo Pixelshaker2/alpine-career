@@ -17,6 +17,7 @@ from src.models.user import User
 from src.services.application_service import (
     create_application,
     get_application_by_job,
+    update_application_status,
 )
 from src.services.job_matcher import score_job, score_jobs
 from src.services.job_service import search_and_persist
@@ -590,6 +591,176 @@ async def cmd_senden(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         f"Zum Bestaetigen: /senden {nr} ja\n"
         f"Zum Abbrechen: /senden {nr} nein"
     )
+
+
+@restricted
+async def cmd_bewerbungen(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Handle /bewerbungen — list all applications with status."""
+    user = await _get_or_create_user(update)
+    if not user:
+        await update.message.reply_text("Nutzer nicht gefunden.")
+        return
+
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(Application)
+            .where(Application.user_id == user.id)
+            .order_by(Application.created_at.desc())
+        )
+        applications = list(result.scalars().all())
+
+    if not applications:
+        await update.message.reply_text(
+            "Noch keine Bewerbungen vorhanden.\n"
+            "Starte mit /suche und /bewerben."
+        )
+        return
+
+    STATUS_EMOJI = {
+        "found": "🔍",
+        "cv_generated": "📄",
+        "review": "👀",
+        "sent": "📨",
+        "interview": "🎯",
+        "rejected": "❌",
+        "offer": "🎉",
+    }
+
+    lines = [f"📋 Deine Bewerbungen ({len(applications)}):\n"]
+
+    for i, app in enumerate(applications, 1):
+        emoji = STATUS_EMOJI.get(app.status, "❓")
+        # Job-Daten sind via lazy="selectin" geladen
+        job = app.job
+        title = job.title if job else "Unbekannt"
+        company = job.company if job else "—"
+        sent_info = ""
+        if app.sent_at:
+            sent_info = f" | gesendet {app.sent_at.strftime('%d.%m.%Y')}"
+
+        lines.append(
+            f"{i}. {emoji} {app.status.upper()}\n"
+            f"   {title} bei {company}{sent_info}"
+        )
+
+        # ID in context speichern fuer /status
+        context.user_data.setdefault("app_list", {})[str(i)] = str(app.id)
+
+    lines.append(
+        "\nStatus aendern: /status [Nr] [neuer_status]\n"
+        "Erlaubt: found, cv_generated, review, sent, interview, rejected, offer"
+    )
+
+    text = "\n".join(lines)
+    if len(text) > 4000:
+        text = text[:4000] + "\n\n... (abgeschnitten)"
+
+    await update.message.reply_text(text)
+
+
+@restricted
+async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /status [nr] [neuer_status] — update application status."""
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text(
+            "Bitte Nummer und Status angeben: /status 1 interview\n\n"
+            "Erlaubte Status:\n"
+            "  found — gefunden\n"
+            "  cv_generated — CV erstellt\n"
+            "  review — in Pruefung\n"
+            "  sent — gesendet\n"
+            "  interview — Einladung\n"
+            "  rejected — Absage\n"
+            "  offer — Angebot"
+        )
+        return
+
+    nr = context.args[0]
+    new_status = context.args[1].lower()
+
+    app_list = context.user_data.get("app_list", {})
+
+    if nr not in app_list:
+        await update.message.reply_text(
+            f"Nr. {nr} nicht gefunden. Fuehre zuerst /bewerbungen aus."
+        )
+        return
+
+    application_id = uuid_mod.UUID(app_list[nr])
+
+    try:
+        app = await update_application_status(application_id, new_status)
+    except ValueError as exc:
+        await update.message.reply_text(f"❌ {exc}")
+        return
+
+    STATUS_LABELS = {
+        "found": "🔍 Gefunden",
+        "cv_generated": "📄 CV erstellt",
+        "review": "👀 In Pruefung",
+        "sent": "📨 Gesendet",
+        "interview": "🎯 Einladung",
+        "rejected": "❌ Absage",
+        "offer": "🎉 Angebot",
+    }
+
+    label = STATUS_LABELS.get(new_status, new_status)
+    await update.message.reply_text(f"✅ Status aktualisiert: {label}")
+
+
+@restricted
+async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /stats — show application statistics."""
+    user = await _get_or_create_user(update)
+    if not user:
+        await update.message.reply_text("Nutzer nicht gefunden.")
+        return
+
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(Application).where(Application.user_id == user.id)
+        )
+        applications = list(result.scalars().all())
+
+    if not applications:
+        await update.message.reply_text(
+            "Noch keine Bewerbungen vorhanden."
+        )
+        return
+
+    total = len(applications)
+    by_status: dict[str, int] = {}
+    for app in applications:
+        by_status[app.status] = by_status.get(app.status, 0) + 1
+
+    sent = by_status.get("sent", 0)
+    interviews = by_status.get("interview", 0)
+    offers = by_status.get("offer", 0)
+    rejected = by_status.get("rejected", 0)
+
+    # Quote berechnen
+    responded = interviews + offers + rejected
+    interview_rate = (
+        f"{(interviews + offers) / responded * 100:.0f}%"
+        if responded > 0
+        else "—"
+    )
+
+    text = (
+        f"📊 Bewerbungs-Statistik\n\n"
+        f"📋 Total: {total}\n"
+        f"📄 CV erstellt: {by_status.get('cv_generated', 0)}\n"
+        f"📨 Gesendet: {sent}\n"
+        f"🎯 Einladungen: {interviews}\n"
+        f"🎉 Angebote: {offers}\n"
+        f"❌ Absagen: {rejected}\n\n"
+        f"📈 Einladungsquote: {interview_rate}\n"
+        f"   (basierend auf {responded} Rueckmeldungen)"
+    )
+
+    await update.message.reply_text(text)
 
 
 async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

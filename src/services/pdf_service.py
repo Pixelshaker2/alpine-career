@@ -1,218 +1,92 @@
 """PDF service — generates professional CV and cover letter PDFs.
 
-Uses WeasyPrint to render HTML templates to PDF.
-Templates use clean, professional styling suitable for
-the German/Swiss job market.
+Uses fpdf2 (pure Python, keine System-Dependencies).
+Templates mit sauberem, professionellem Layout fuer den
+deutsch/schweizerischen Arbeitsmarkt.
 """
 
+import io
 import logging
 from datetime import datetime, timezone
+
+from fpdf import FPDF
 
 from src.services.ai_service import GeneratedCoverLetter, GeneratedCV
 
 logger = logging.getLogger(__name__)
 
-# --- CV HTML Template ---
+# Farben
+BLUE = (13, 71, 161)        # Akzentfarbe
+DARK = (26, 26, 26)         # Haupttext
+GRAY = (100, 100, 100)      # Sekundaertext
+LIGHT_GRAY = (200, 200, 200)  # Linien
 
-CV_HTML_TEMPLATE = """\
-<!DOCTYPE html>
-<html lang="de">
-<head>
-<meta charset="utf-8">
-<style>
-@page {{
-    size: A4;
-    margin: 2cm 2.5cm;
-}}
-body {{
-    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
-    font-size: 10pt;
-    line-height: 1.5;
-    color: #1a1a1a;
-    margin: 0;
-}}
-h1 {{
-    font-size: 18pt;
-    font-weight: 700;
-    margin: 0 0 2pt 0;
-    color: #0d47a1;
-}}
-.subtitle {{
-    font-size: 11pt;
-    color: #555;
-    margin: 0 0 12pt 0;
-}}
-.contact {{
-    font-size: 9pt;
-    color: #666;
-    margin-bottom: 16pt;
-    padding-bottom: 8pt;
-    border-bottom: 2px solid #0d47a1;
-}}
-h2 {{
-    font-size: 12pt;
-    font-weight: 700;
-    color: #0d47a1;
-    margin: 16pt 0 6pt 0;
-    text-transform: uppercase;
-    letter-spacing: 0.5pt;
-    border-bottom: 1px solid #ddd;
-    padding-bottom: 3pt;
-}}
-.section-content {{
-    margin: 0 0 8pt 0;
-    white-space: pre-wrap;
-}}
-.experience-item {{
-    margin-bottom: 10pt;
-}}
-.job-header {{
-    font-weight: 700;
-    font-size: 10.5pt;
-}}
-.job-meta {{
-    font-size: 9pt;
-    color: #666;
-    margin-bottom: 4pt;
-}}
-ul {{
-    margin: 2pt 0;
-    padding-left: 16pt;
-}}
-li {{
-    margin-bottom: 2pt;
-}}
-.skills-grid {{
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4pt;
-}}
-.skill-tag {{
-    background: #e8eaf6;
-    color: #283593;
-    padding: 2pt 8pt;
-    border-radius: 3pt;
-    font-size: 9pt;
-}}
-.footer {{
-    font-size: 8pt;
-    color: #999;
-    margin-top: 20pt;
-    text-align: center;
-}}
-</style>
-</head>
-<body>
 
-<h1>{name}</h1>
-<p class="subtitle">{subtitle}</p>
-<p class="contact">{email} · {phone} · {location}</p>
+class CVDocument(FPDF):
+    """Professional CV PDF document."""
 
-<h2>Zusammenfassung</h2>
-<div class="section-content">{summary}</div>
+    def header(self) -> None:
+        """No default header — we build our own."""
 
-<h2>Berufserfahrung</h2>
-<div class="section-content">{experience}</div>
+    def footer(self) -> None:
+        """Page number in footer."""
+        self.set_y(-15)
+        self.set_font("Helvetica", "", 8)
+        self.set_text_color(*GRAY)
+        self.cell(0, 10, f"Seite {self.page_no()}", align="C")
 
-<h2>Skills</h2>
-<div class="section-content">{skills}</div>
+    def add_section_header(self, title: str) -> None:
+        """Add a styled section header with blue underline."""
+        self.ln(6)
+        self.set_font("Helvetica", "B", 11)
+        self.set_text_color(*BLUE)
+        self.cell(0, 7, title.upper(), new_x="LMARGIN", new_y="NEXT")
+        # Trennlinie
+        self.set_draw_color(*LIGHT_GRAY)
+        self.line(self.l_margin, self.get_y(), self.w - self.r_margin, self.get_y())
+        self.ln(3)
 
-<h2>Zertifizierungen</h2>
-<div class="section-content">{certifications}</div>
+    def add_body_text(self, text: str) -> None:
+        """Add body text in standard formatting."""
+        self.set_font("Helvetica", "", 10)
+        self.set_text_color(*DARK)
+        # Ersetze problematische Zeichen
+        clean = _clean_text(text)
+        self.multi_cell(0, 5, clean)
+        self.ln(2)
 
-<h2>Sprachen</h2>
-<div class="section-content">{languages}</div>
 
-</body>
-</html>
-"""
+class CoverLetterDocument(FPDF):
+    """Professional cover letter PDF document."""
 
-# --- Cover Letter HTML Template ---
+    def header(self) -> None:
+        """No default header."""
 
-COVER_LETTER_HTML_TEMPLATE = """\
-<!DOCTYPE html>
-<html lang="de">
-<head>
-<meta charset="utf-8">
-<style>
-@page {{
-    size: A4;
-    margin: 2.5cm 2.5cm 2cm 2.5cm;
-}}
-body {{
-    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
-    font-size: 11pt;
-    line-height: 1.6;
-    color: #1a1a1a;
-    margin: 0;
-}}
-.sender {{
-    margin-bottom: 24pt;
-}}
-.sender-name {{
-    font-size: 14pt;
-    font-weight: 700;
-    color: #0d47a1;
-    margin: 0;
-}}
-.sender-info {{
-    font-size: 9pt;
-    color: #666;
-    margin: 2pt 0 0 0;
-}}
-.recipient {{
-    margin-bottom: 16pt;
-    font-size: 10pt;
-}}
-.date {{
-    margin-bottom: 16pt;
-    font-size: 10pt;
-    color: #666;
-}}
-.subject {{
-    font-weight: 700;
-    font-size: 11pt;
-    margin-bottom: 16pt;
-}}
-.body-text {{
-    white-space: pre-wrap;
-    margin-bottom: 24pt;
-}}
-.signature {{
-    margin-top: 24pt;
-}}
-.signature-name {{
-    font-weight: 700;
-}}
-</style>
-</head>
-<body>
+    def footer(self) -> None:
+        """No page number on cover letter."""
 
-<div class="sender">
-    <p class="sender-name">{name}</p>
-    <p class="sender-info">{email} · {phone}</p>
-    <p class="sender-info">{sender_location}</p>
-</div>
 
-<div class="recipient">
-    <p>{company}</p>
-    <p>{company_location}</p>
-</div>
-
-<p class="date">{date}</p>
-
-<p class="subject">{subject}</p>
-
-<div class="body-text">{body}</div>
-
-<div class="signature">
-    <p>Mit freundlichen Gruessen</p>
-    <p class="signature-name">{name}</p>
-</div>
-
-</body>
-</html>
-"""
+def _clean_text(text: str) -> str:
+    """Clean text for fpdf2 — replace unsupported chars."""
+    # fpdf2 mit Helvetica unterstuetzt kein volles Unicode
+    # Ersetze gaengige Sonderzeichen
+    replacements = {
+        "–": "-",   # en-dash
+        "—": "-",   # em-dash
+        "‘": "'",   # left single quote
+        "’": "'",   # right single quote
+        "“": '"',   # left double quote
+        "”": '"',   # right double quote
+        "•": "-",   # bullet
+        "…": "...", # ellipsis
+        "«": '"',   # guillemet left
+        "»": '"',   # guillemet right
+        "​": "",    # zero-width space
+        "\t": "    ",    # tab
+    }
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    return text
 
 
 def _format_date_german() -> str:
@@ -246,22 +120,63 @@ def render_cv_pdf(
     Returns:
         PDF file as bytes.
     """
-    from weasyprint import HTML
+    pdf = CVDocument(orientation="P", unit="mm", format="A4")
+    pdf.set_auto_page_break(auto=True, margin=20)
+    pdf.add_page()
+    pdf.set_margins(25, 20, 25)
 
-    html_content = CV_HTML_TEMPLATE.format(
-        name=name,
-        subtitle="IT-Systemadministrator — Cloud & Modern Workplace",
-        email=email,
-        phone=phone,
-        location=location,
-        summary=_escape_html(cv.summary),
-        experience=_escape_html(cv.experience),
-        skills=_escape_html(cv.skills),
-        certifications=_escape_html(cv.certifications),
-        languages=_escape_html(languages),
+    # === Name ===
+    pdf.set_font("Helvetica", "B", 18)
+    pdf.set_text_color(*BLUE)
+    pdf.cell(0, 10, _clean_text(name), new_x="LMARGIN", new_y="NEXT")
+
+    # === Untertitel ===
+    pdf.set_font("Helvetica", "", 11)
+    pdf.set_text_color(*GRAY)
+    pdf.cell(
+        0, 6,
+        "IT-Systemadministrator - Cloud & Modern Workplace",
+        new_x="LMARGIN", new_y="NEXT",
     )
 
-    pdf_bytes = HTML(string=html_content).write_pdf()
+    # === Kontakt ===
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_text_color(*GRAY)
+    contact = f"{email}  |  {phone}  |  {location}"
+    pdf.cell(0, 6, _clean_text(contact), new_x="LMARGIN", new_y="NEXT")
+
+    # Blaue Trennlinie
+    pdf.ln(2)
+    pdf.set_draw_color(*BLUE)
+    pdf.set_line_width(0.5)
+    pdf.line(pdf.l_margin, pdf.get_y(), pdf.w - pdf.r_margin, pdf.get_y())
+    pdf.ln(4)
+
+    # === Zusammenfassung ===
+    pdf.add_section_header("Zusammenfassung")
+    pdf.add_body_text(cv.summary)
+
+    # === Berufserfahrung ===
+    pdf.add_section_header("Berufserfahrung")
+    pdf.add_body_text(cv.experience)
+
+    # === Skills ===
+    pdf.add_section_header("Skills")
+    pdf.add_body_text(cv.skills)
+
+    # === Zertifizierungen ===
+    pdf.add_section_header("Zertifizierungen")
+    pdf.add_body_text(cv.certifications)
+
+    # === Sprachen ===
+    pdf.add_section_header("Sprachen")
+    pdf.add_body_text(languages)
+
+    # Output
+    buf = io.BytesIO()
+    pdf.output(buf)
+    pdf_bytes = buf.getvalue()
+
     logger.info("CV PDF rendered", extra={"size_bytes": len(pdf_bytes)})
     return pdf_bytes
 
@@ -289,31 +204,66 @@ def render_cover_letter_pdf(
     Returns:
         PDF file as bytes.
     """
-    from weasyprint import HTML
+    pdf = CoverLetterDocument(orientation="P", unit="mm", format="A4")
+    pdf.set_auto_page_break(auto=True, margin=25)
+    pdf.add_page()
+    pdf.set_margins(25, 25, 25)
 
-    html_content = COVER_LETTER_HTML_TEMPLATE.format(
-        name=name,
-        email=email,
-        phone=phone,
-        sender_location=sender_location,
-        company=_escape_html(company),
-        company_location=_escape_html(company_location),
-        date=_format_date_german(),
-        subject=_escape_html(letter.subject),
-        body=_escape_html(letter.body),
+    # === Absender ===
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.set_text_color(*BLUE)
+    pdf.cell(0, 8, _clean_text(name), new_x="LMARGIN", new_y="NEXT")
+
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_text_color(*GRAY)
+    pdf.cell(
+        0, 5,
+        f"{email}  |  {phone}",
+        new_x="LMARGIN", new_y="NEXT",
     )
+    pdf.cell(0, 5, _clean_text(sender_location), new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(10)
 
-    pdf_bytes = HTML(string=html_content).write_pdf()
+    # === Empfaenger ===
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_text_color(*DARK)
+    pdf.cell(0, 5, _clean_text(company), new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 5, _clean_text(company_location), new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(8)
+
+    # === Datum ===
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_text_color(*GRAY)
+    pdf.cell(0, 5, _format_date_german(), new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(8)
+
+    # === Betreff ===
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.set_text_color(*DARK)
+    pdf.cell(0, 6, _clean_text(letter.subject), new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(8)
+
+    # === Brieftext ===
+    pdf.set_font("Helvetica", "", 11)
+    pdf.set_text_color(*DARK)
+    clean_body = _clean_text(letter.body)
+    pdf.multi_cell(0, 6, clean_body)
+    pdf.ln(12)
+
+    # === Grussformel ===
+    pdf.set_font("Helvetica", "", 11)
+    pdf.cell(0, 6, "Mit freundlichen Gruessen", new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(6)
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.cell(0, 6, _clean_text(name), new_x="LMARGIN", new_y="NEXT")
+
+    # Output
+    buf = io.BytesIO()
+    pdf.output(buf)
+    pdf_bytes = buf.getvalue()
+
     logger.info(
         "Cover letter PDF rendered",
         extra={"size_bytes": len(pdf_bytes)},
     )
     return pdf_bytes
-
-
-def _escape_html(text: str) -> str:
-    """Escape HTML special characters but preserve line breaks."""
-    text = text.replace("&", "&amp;")
-    text = text.replace("<", "&lt;")
-    text = text.replace(">", "&gt;")
-    return text
