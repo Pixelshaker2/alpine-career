@@ -15,14 +15,12 @@ IMPORTANT: No credentials or tokens are ever logged or stored in code.
 
 import base64
 import logging
-import os
 import pickle
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
 
-from src.core.config import settings
 from src.models.application import Application
 from src.models.job import Job
 
@@ -38,24 +36,17 @@ TOKEN_PATH = Path("/app/data/gmail_token.pickle")
 def _get_gmail_service():
     """Build Gmail API service with OAuth2 credentials.
 
-    First call requires interactive authorization (browser).
-    Subsequent calls use the stored refresh token.
+    Token must be pre-generated via scripts/gmail_auth.py.
+    This function only loads and refreshes existing tokens.
 
     Returns:
         Gmail API service object.
 
     Raises:
-        RuntimeError: If credentials are not configured.
+        RuntimeError: If no valid token is available.
     """
     from google.auth.transport.requests import Request
-    from google_auth_oauthlib.flow import InstalledAppFlow
     from googleapiclient.discovery import build
-
-    if not settings.gmail_credentials_file:
-        raise RuntimeError(
-            "GMAIL_CREDENTIALS_FILE ist nicht konfiguriert. "
-            "Bitte OAuth2 Credentials in .env setzen."
-        )
 
     creds = None
 
@@ -64,26 +55,21 @@ def _get_gmail_service():
         with open(TOKEN_PATH, "rb") as f:
             creds = pickle.load(f)
 
-    # Token erneuern oder neu erstellen
+    # Token erneuern (kein Browser-Flow auf dem Server!)
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
+            # Erneuerten Token speichern
+            TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
+            with open(TOKEN_PATH, "wb") as f:
+                pickle.dump(creds, f)
         else:
-            if not os.path.exists(settings.gmail_credentials_file):
-                raise RuntimeError(
-                    f"Credentials-Datei nicht gefunden: "
-                    f"{settings.gmail_credentials_file}"
-                )
-            flow = InstalledAppFlow.from_client_secrets_file(
-                settings.gmail_credentials_file,
-                SCOPES,
+            raise RuntimeError(
+                "Kein gueltiger Gmail-Token vorhanden. "
+                "Bitte lokal 'python scripts/gmail_auth.py' ausfuehren "
+                "und den Token auf den Server kopieren. "
+                "Siehe scripts/gmail_auth.py fuer Details."
             )
-            creds = flow.run_local_server(port=0)
-
-        # Token speichern
-        TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with open(TOKEN_PATH, "wb") as f:
-            pickle.dump(creds, f)
 
     return build("gmail", "v1", credentials=creds)
 

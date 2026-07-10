@@ -74,3 +74,8 @@ docker-volumes/
 *.pem
 *.key
 *.crt
+
+# Gmail OAuth2
+credentials.json
+gmail_token.pickle
+*.pickle
