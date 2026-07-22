@@ -46,7 +46,10 @@ async def daily_job_search(context: ContextTypes.DEFAULT_TYPE) -> None:
         # Alle registrierten User benachrichtigen
         async with async_session_factory() as session:
             result = await session.execute(
-                select(User).where(User.telegram_chat_id.isnot(None))
+                select(User).where(
+                    User.telegram_chat_id.isnot(None),
+                    User.telegram_chat_id != 0,
+                )
             )
             users = list(result.scalars().all())
 

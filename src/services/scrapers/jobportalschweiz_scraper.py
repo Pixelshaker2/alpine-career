@@ -11,6 +11,7 @@ URL-Schema:
   Kantone: kanton-luzern, kanton-zuerich, kanton-bern, kanton-basel-landschaft
 """
 
+import asyncio
 import logging
 import re
 from datetime import datetime, timezone
@@ -242,6 +243,8 @@ async def search_jobportalschweiz() -> list[ScrapedJob]:
                     if job.external_id not in seen_ids:
                         seen_ids.add(job.external_id)
                         all_jobs.append(job)
+                # Rate Limiting — 0.5s zwischen Requests
+                await asyncio.sleep(0.5)
 
     logger.info(
         "jobportalschweiz search done",

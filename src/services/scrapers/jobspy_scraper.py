@@ -133,23 +133,32 @@ async def search_jobspy(
     if region == "schweiz" or region is None:
         regions.append("schweiz")
 
+    seen_ids: set[str] = set()
+
     for reg in regions:
         for search_cfg in REGION_CONFIG[reg]:
-            scraped = await asyncio.to_thread(
-                _scrape_single,
-                search_term=SEARCH_TERMS[0],
-                location=search_cfg["location"],
-                country_indeed=search_cfg["country_indeed"],
-                results_wanted=max_per_search,
-            )
-            all_jobs.extend(scraped)
+            # Alle Suchbegriffe verwenden fuer bessere Abdeckung
+            for term in SEARCH_TERMS:
+                scraped = await asyncio.to_thread(
+                    _scrape_single,
+                    search_term=term,
+                    location=search_cfg["location"],
+                    country_indeed=search_cfg["country_indeed"],
+                    results_wanted=max_per_search,
+                )
+                # Duplikate filtern
+                for job in scraped:
+                    if job.external_id not in seen_ids:
+                        seen_ids.add(job.external_id)
+                        all_jobs.append(job)
 
-            logger.info(
-                "JobSpy search done",
-                extra={
-                    "location": search_cfg["location"],
-                    "results": len(scraped),
-                },
-            )
+                logger.info(
+                    "JobSpy search done",
+                    extra={
+                        "term": term,
+                        "location": search_cfg["location"],
+                        "results": len(scraped),
+                    },
+                )
 
     return all_jobs

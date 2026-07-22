@@ -2,6 +2,7 @@
 
 import io
 import logging
+import re
 import uuid as uuid_mod
 
 from sqlalchemy import select
@@ -24,6 +25,39 @@ from src.services.job_service import search_and_persist
 from src.services.rav_service import render_monthly_overview, render_rav_nachweis
 
 logger = logging.getLogger(__name__)
+
+# Einfache aber robuste E-Mail-Validierung
+EMAIL_REGEX = re.compile(
+    r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+)
+
+
+def _validate_email(email: str) -> bool:
+    """Validate email address format."""
+    return bool(EMAIL_REGEX.match(email))
+
+
+async def _send_long_message(update: Update, text: str) -> None:
+    """Send text, splitting at line boundaries if >4000 chars."""
+    if len(text) <= 4000:
+        await update.message.reply_text(text)
+        return
+
+    # An Zeilengrenze aufteilen
+    lines = text.split("\n")
+    chunk: list[str] = []
+    chunk_len = 0
+
+    for line in lines:
+        if chunk_len + len(line) + 1 > 3900 and chunk:
+            await update.message.reply_text("\n".join(chunk))
+            chunk = []
+            chunk_len = 0
+        chunk.append(line)
+        chunk_len += len(line) + 1
+
+    if chunk:
+        await update.message.reply_text("\n".join(chunk))
 
 
 async def _get_or_create_user(update: Update) -> User | None:
@@ -90,14 +124,54 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 @restricted
 async def cmd_botstatus(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /botstatus — show bot and system status."""
+    """Handle /botstatus — show bot and system status with real checks."""
+    from src.core.config import settings
+
+    # DB pruefen
+    db_status = "❌ nicht erreichbar"
+    try:
+        async with async_session_factory() as session:
+            await session.execute(select(User).limit(1))
+        db_status = "✅ verbunden"
+    except Exception:
+        pass
+
+    # Redis pruefen
+    redis_status = "❌ nicht erreichbar"
+    try:
+        import redis.asyncio as aioredis
+
+        r = aioredis.from_url(settings.redis_url, decode_responses=True)
+        try:
+            await r.ping()
+            redis_status = "✅ verbunden"
+        finally:
+            await r.aclose()
+    except Exception:
+        pass
+
+    # Claude API pruefen
+    claude_status = "✅ konfiguriert" if settings.anthropic_api_key else "❌ kein API Key"
+
+    # Gmail Token pruefen
+    from pathlib import Path
+
+    gmail_token = Path("/app/data/gmail_token.pickle")
+    gmail_status = "✅ Token vorhanden" if gmail_token.exists() else "⚠️ kein Token"
+
+    # Zeugnisse zaehlen
+    zeugnisse_dir = Path("/app/data/zeugnisse")
+    zeugnisse_count = len(list(zeugnisse_dir.glob("*.pdf"))) if zeugnisse_dir.exists() else 0
+    zeugnisse_status = f"📎 {zeugnisse_count} PDFs" if zeugnisse_count else "⚠️ keine"
+
     await update.message.reply_text(
-        "✅ Bot laeuft.\n"
-        "📊 System-Status:\n"
-        "  • Datenbank: verbunden\n"
-        "  • Redis: verbunden\n"
-        "  • Claude API: bereit\n\n"
-        "🔧 Version: 0.1.0 (MVP)"
+        "📊 System-Status:\n\n"
+        f"  • Datenbank: {db_status}\n"
+        f"  • Redis: {redis_status}\n"
+        f"  • Claude API: {claude_status}\n"
+        f"  • Gmail: {gmail_status}\n"
+        f"  • Zeugnisse: {zeugnisse_status}\n\n"
+        "🔧 Version: 0.2.0 (MVP)"
     )
 
 
@@ -261,12 +335,8 @@ async def cmd_suche(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     lines.append(f"\nTippe /detail [Nr] fuer Details (z.B. /detail 1)")
 
-    # Telegram max 4096 Zeichen — aufteilen wenn noetig
     text = "\n".join(lines)
-    if len(text) > 4000:
-        text = text[:4000] + "\n\n... (weitere Ergebnisse abgeschnitten)"
-
-    await update.message.reply_text(text)
+    await _send_long_message(update, text)
 
 
 @restricted
@@ -397,7 +467,7 @@ async def cmd_bewerben(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             f"📧 Betreff: {application.email_subject}\n\n"
             f"📬 An welche E-Mail-Adresse soll die Bewerbung gehen?\n"
             f"Schreib einfach die Adresse (z.B. hr@swisscom.com)\n"
-            f"oder /skip falls du sie spaeter angeben willst."
+            f"oder tippe skip falls du sie spaeter angeben willst."
         )
     else:
         await update.message.reply_text(
@@ -541,11 +611,21 @@ async def cmd_senden(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
                 context.user_data.pop("pending_send", None)
 
+                from pathlib import Path as _Path
+
+                _z_dir = _Path("/app/data/zeugnisse")
+                _z_count = len(list(_z_dir.glob("*.pdf"))) if _z_dir.exists() else 0
+                _z_text = (
+                    f"CV + Anschreiben + {_z_count} Zeugnisse"
+                    if _z_count > 0
+                    else "CV + Anschreiben"
+                )
+
                 await update.message.reply_text(
                     "✅ Bewerbung gesendet!\n\n"
                     f"📧 An: {application.email_to or 'Empfaenger'}\n"
                     f"📋 Betreff: {application.email_subject}\n"
-                    f"📎 Anhaenge: CV + Anschreiben als PDF\n\n"
+                    f"📎 Anhaenge: {_z_text} (PDF)\n\n"
                     "Der Status wurde auf «sent» gesetzt."
                 )
                 return
@@ -603,6 +683,17 @@ async def cmd_senden(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     job_title = job.title if job else "Stelle"
     company = job.company if job else "Unbekannt"
 
+    # Zeugnisse zaehlen fuer die Bestaetigung
+    from pathlib import Path
+
+    zeugnisse_dir = Path("/app/data/zeugnisse")
+    zeugnisse_count = len(list(zeugnisse_dir.glob("*.pdf"))) if zeugnisse_dir.exists() else 0
+    zeugnisse_info = (
+        f"📎 Anhaenge: CV + Anschreiben + {zeugnisse_count} Zeugnisse (PDF)"
+        if zeugnisse_count > 0
+        else "📎 Anhaenge: CV + Anschreiben (PDF)"
+    )
+
     # Pending speichern und Bestaetigung anfordern
     context.user_data["pending_send"] = {
         "nr": nr,
@@ -613,8 +704,9 @@ async def cmd_senden(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         f"⚠️ Bewerbung versenden?\n\n"
         f"📌 Stelle: {job_title}\n"
         f"🏢 Firma: {company}\n"
+        f"📧 An: {application.email_to or 'Noch keine E-Mail gesetzt!'}\n"
         f"📧 Betreff: {application.email_subject}\n"
-        f"📎 Anhaenge: CV + Anschreiben (PDF)\n\n"
+        f"{zeugnisse_info}\n\n"
         f"Zum Bestaetigen: /senden {nr} ja\n"
         f"Zum Abbrechen: /senden {nr} nein"
     )
@@ -681,10 +773,7 @@ async def cmd_bewerbungen(
     )
 
     text = "\n".join(lines)
-    if len(text) > 4000:
-        text = text[:4000] + "\n\n... (abgeschnitten)"
-
-    await update.message.reply_text(text)
+    await _send_long_message(update, text)
 
 
 @restricted
@@ -950,7 +1039,7 @@ async def cmd_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     nr = context.args[0]
     email_addr = context.args[1].lower().strip()
 
-    if "@" not in email_addr or "." not in email_addr:
+    if not _validate_email(email_addr):
         await update.message.reply_text("Ungueltige E-Mail-Adresse.")
         return
 
@@ -1094,6 +1183,7 @@ async def cmd_anpassen(
     )
 
 
+@restricted
 async def handle_text_message(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
@@ -1103,7 +1193,7 @@ async def handle_text_message(
     if awaiting:
         text = update.message.text.strip().lower()
 
-        if text == "/skip":
+        if text in ("skip", "/skip"):
             context.user_data.pop("awaiting_email_for", None)
             nr = awaiting["nr"]
             await update.message.reply_text(
@@ -1114,10 +1204,10 @@ async def handle_text_message(
             return
 
         # E-Mail validieren
-        if "@" not in text or "." not in text:
+        if not _validate_email(text):
             await update.message.reply_text(
                 "Das sieht nicht nach einer E-Mail-Adresse aus.\n"
-                "Bitte nochmal eingeben oder /skip."
+                "Bitte nochmal eingeben oder tippe skip."
             )
             return
 
@@ -1148,6 +1238,7 @@ async def handle_text_message(
     )
 
 
+@restricted
 async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle unknown commands."""
     await update.message.reply_text(

@@ -2,6 +2,7 @@
 
 import json
 import logging
+import uuid as uuid_mod
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -86,20 +87,23 @@ async def search_and_persist(
     # Check Redis cache
     try:
         r = await _get_redis()
-        cached = await r.get(cache_key)
-        if cached:
-            job_ids = json.loads(cached)
-            logger.info(
-                "Cache hit",
-                extra={"key": cache_key, "count": len(job_ids)},
-            )
-            # Load jobs from DB by IDs
-            async with async_session_factory() as session:
-                result = await session.execute(
-                    select(Job).where(Job.id.in_(job_ids))
+        try:
+            cached = await r.get(cache_key)
+            if cached:
+                raw_ids = json.loads(cached)
+                # UUIDs korrekt casten (asyncpg ist strikt)
+                job_ids = [uuid_mod.UUID(jid) for jid in raw_ids]
+                logger.info(
+                    "Cache hit",
+                    extra={"key": cache_key, "count": len(job_ids)},
                 )
-                return list(result.scalars().all())
-        await r.aclose()
+                async with async_session_factory() as session:
+                    result = await session.execute(
+                        select(Job).where(Job.id.in_(job_ids))
+                    )
+                    return list(result.scalars().all())
+        finally:
+            await r.aclose()
     except Exception:
         logger.warning("Redis cache unavailable, falling back to API")
 

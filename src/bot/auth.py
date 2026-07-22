@@ -23,13 +23,15 @@ def restricted(
     ) -> None:
         username = update.effective_user.username if update.effective_user else None
         if username not in settings.allowed_usernames_list:
+            chat_id = update.effective_chat.id if update.effective_chat else 0
             logger.warning(
                 "Unauthorized access attempt",
-                extra={"username": username, "chat_id": update.effective_chat.id},
+                extra={"username": username, "chat_id": chat_id},
             )
-            await update.message.reply_text(
-                "Zugriff verweigert. Dieser Bot ist nicht oeffentlich."
-            )
+            if update.message:
+                await update.message.reply_text(
+                    "Zugriff verweigert. Dieser Bot ist nicht oeffentlich."
+                )
             return
         return await func(update, context)
 

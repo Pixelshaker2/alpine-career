@@ -79,11 +79,17 @@ async def create_application(
                 "Nutze /vorschau um sie anzusehen."
             )
 
-    # 2. CV optimieren
+    # Profildaten extrahieren
     skills = profile.skills or {}
     core_skills = skills.get("core", [])
     target_roles = (profile.target_roles or {}).get("titles_de", [])
     certs_in_progress = skills.get("certifications_in_progress", [])
+
+    # Kontaktdaten aus Profil (nicht hardcoden)
+    locations = profile.target_locations or {}
+    primary_loc = locations.get("primary", {})
+    user_location = primary_loc.get("city", "Berlin")
+    user_phone = skills.get("phone", "+41 79 876 38 81")
 
     logger.info("Generating CV", extra={"job_id": str(job_id)})
     cv = await optimize_cv(
@@ -116,16 +122,16 @@ async def create_application(
         cv=cv,
         name=user.name,
         email=user.email,
-        phone="+41 79 876 38 81",
-        location="Berlin",
+        phone=user_phone,
+        location=user_location,
     )
 
     cover_letter_pdf = render_cover_letter_pdf(
         letter=letter,
         name=user.name,
         email=user.email,
-        phone="+41 79 876 38 81",
-        sender_location="Berlin",
+        phone=user_phone,
+        sender_location=user_location,
         company=job.company,
         company_location=job.location,
     )
@@ -194,11 +200,17 @@ async def create_application_with_feedback(
         if not job:
             raise ValueError("Stelle nicht gefunden")
 
-    # 2. CV optimieren mit Feedback
+    # Profildaten extrahieren
     skills = profile.skills or {}
     core_skills = skills.get("core", [])
     target_roles = (profile.target_roles or {}).get("titles_de", [])
     certs_in_progress = skills.get("certifications_in_progress", [])
+
+    # Kontaktdaten aus Profil
+    locations = profile.target_locations or {}
+    primary_loc = locations.get("primary", {})
+    user_location = primary_loc.get("city", "Berlin")
+    user_phone = skills.get("phone", "+41 79 876 38 81")
 
     # Feedback an die Job-Beschreibung anhaengen damit Claude es beruecksichtigt
     enhanced_description = (
@@ -239,16 +251,16 @@ async def create_application_with_feedback(
         cv=cv,
         name=user.name,
         email=user.email,
-        phone="+41 79 876 38 81",
-        location="Berlin",
+        phone=user_phone,
+        location=user_location,
     )
 
     cover_letter_pdf = render_cover_letter_pdf(
         letter=letter,
         name=user.name,
         email=user.email,
-        phone="+41 79 876 38 81",
-        sender_location="Berlin",
+        phone=user_phone,
+        sender_location=user_location,
         company=job.company,
         company_location=job.location,
     )

@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     # --- App ---
     app_name: str = "alpine-career"
     app_env: str = "development"
-    app_debug: bool = True
+    app_debug: bool = False
 
     # --- Database ---
     postgres_host: str = "localhost"

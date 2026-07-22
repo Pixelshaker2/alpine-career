@@ -367,7 +367,7 @@ def render_rav_nachweis(
         y += ROW_HEIGHT
 
     # Seite 2 (falls noetig oder fuer leere Zeilen)
-    if len(applications) > rows_per_page_1 or True:  # Immer Seite 2
+    if len(applications) > rows_per_page_1:  # Seite 2 nur wenn noetig
         pdf.add_page()
         y = pdf.draw_table_header(12)
 

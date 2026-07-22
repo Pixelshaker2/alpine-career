@@ -380,9 +380,10 @@ def _parse_cv_sections(text: str) -> dict[str, str]:
 
     for line in text.split("\n"):
         stripped = line.strip()
-        # Erkennung: Zeile besteht nur aus Grossbuchstaben (+ Leerzeichen)
+        # Erkennung: Zeile besteht nur aus Grossbuchstaben (+ Leerzeichen, &)
         clean = stripped.replace("*", "").replace("#", "").strip()
-        if clean and clean.upper() == clean and len(clean) > 3 and clean.isalpha():
+        alpha_only = clean.replace(" ", "").replace("&", "").replace("-", "")
+        if clean and clean.upper() == clean and len(clean) > 3 and alpha_only.isalpha():
             if current_key:
                 sections[current_key] = "\n".join(current_lines).strip()
             current_key = clean.lower()

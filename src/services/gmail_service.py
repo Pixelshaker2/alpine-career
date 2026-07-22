@@ -185,12 +185,16 @@ Mit freundlichen Gruessen
 async def send_application_email(
     application: Application,
     job: Job | None = None,
+    sender_name: str = "",
+    sender_email: str = "",
 ) -> str:
     """Send application email via Gmail API.
 
     Args:
         application: Application with PDFs and email data.
         job: Job posting (for metadata).
+        sender_name: Applicant name (from DB, not hardcoded).
+        sender_email: Sender Gmail address (from DB, not hardcoded).
 
     Returns:
         Gmail message ID.
@@ -201,11 +205,23 @@ async def send_application_email(
     """
     import asyncio
 
+    from src.core.database import async_session_factory
+    from src.models.user import User
+
     if not application.cv_pdf or not application.cover_letter_pdf:
         raise ValueError("Bewerbung hat keine generierten PDFs")
 
-    # E-Mail-Adresse des Empfaengers
-    # Im MVP: an die Job-URL-Domain oder manuell gesetzt
+    # Absender-Daten aus DB laden falls nicht uebergeben
+    if not sender_name or not sender_email:
+        async with async_session_factory() as session:
+            user = await session.get(User, application.user_id)
+            if user:
+                sender_name = sender_name or user.name
+                sender_email = sender_email or user.email or ""
+
+    if not sender_email:
+        raise ValueError("Keine Absender-E-Mail konfiguriert")
+
     recipient = application.email_to
     if not recipient:
         raise ValueError(
@@ -218,7 +234,6 @@ async def send_application_email(
 
     # E-Mail-Body: AI-generiertes Anschreiben verwenden, Fallback nur wenn leer
     if application.email_body and len(application.email_body) > 50:
-        # Anschreiben als E-Mail-Text + Hinweis auf Anhaenge
         body = (
             f"{application.email_body}\n\n"
             "---\n"
@@ -229,20 +244,19 @@ async def send_application_email(
         body = EMAIL_BODY_FALLBACK.format(
             job_title=job_title,
             company=company,
-            name="Marco von Burg",
+            name=sender_name,
         )
 
     subject = application.email_subject or f"Bewerbung als {job_title}"
 
-    # E-Mail bauen
     raw_email = _build_email(
-        sender="m.vonburg94@gmail.com",
+        sender=sender_email,
         to=recipient,
         subject=subject,
         body=body,
         cv_pdf=application.cv_pdf,
         cover_letter_pdf=application.cover_letter_pdf,
-        applicant_name="Marco von Burg",
+        applicant_name=sender_name,
         company=company,
     )
 
