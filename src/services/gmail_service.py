@@ -74,6 +74,38 @@ def _get_gmail_service():
     return build("gmail", "v1", credentials=creds)
 
 
+
+# Verzeichnis fuer statische Anhaenge (Zeugnisse, Diplome, Zertifikate)
+ZEUGNISSE_DIR = Path("/app/data/zeugnisse")
+
+
+def _load_zeugnisse() -> list[tuple[str, bytes]]:
+    """Load all PDF files from the Zeugnisse directory.
+
+    Returns:
+        List of (filename, pdf_bytes) tuples.
+    """
+    if not ZEUGNISSE_DIR.exists():
+        logger.info("Kein Zeugnisse-Verzeichnis vorhanden")
+        return []
+
+    zeugnisse: list[tuple[str, bytes]] = []
+    for pdf_file in sorted(ZEUGNISSE_DIR.glob("*.pdf")):
+        try:
+            zeugnisse.append((pdf_file.name, pdf_file.read_bytes()))
+            logger.info(
+                "Zeugnis geladen",
+                extra={"filename": pdf_file.name, "size": pdf_file.stat().st_size},
+            )
+        except Exception as exc:
+            logger.error(
+                "Zeugnis konnte nicht geladen werden",
+                extra={"filename": pdf_file.name, "error": str(exc)},
+            )
+
+    return zeugnisse
+
+
 def _build_email(
     sender: str,
     to: str,
@@ -85,6 +117,8 @@ def _build_email(
     company: str,
 ) -> str:
     """Build a MIME email with PDF attachments.
+
+    Attaches: CV, Anschreiben, plus all PDFs from /app/data/zeugnisse/.
 
     Returns:
         Base64url-encoded email string for Gmail API.
@@ -112,6 +146,21 @@ def _build_email(
         "Content-Disposition", "attachment", filename=letter_filename
     )
     msg.attach(letter_attachment)
+
+    # Zeugnisse, Diplome, Zertifikate aus dem Zeugnisse-Ordner
+    zeugnisse = _load_zeugnisse()
+    for filename, pdf_bytes in zeugnisse:
+        zeugnis_attachment = MIMEApplication(pdf_bytes, _subtype="pdf")
+        zeugnis_attachment.add_header(
+            "Content-Disposition", "attachment", filename=filename
+        )
+        msg.attach(zeugnis_attachment)
+
+    if zeugnisse:
+        logger.info(
+            "Zeugnisse angehaengt",
+            extra={"count": len(zeugnisse)},
+        )
 
     # Base64url encoding fuer Gmail API
     raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")

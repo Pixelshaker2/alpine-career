@@ -16,7 +16,7 @@ COPY src/ src/
 COPY alembic/ alembic/
 COPY alembic.ini .
 
-# Datenverzeichnis
-RUN mkdir -p /app/data
+# Datenverzeichnisse
+RUN mkdir -p /app/data /app/data/zeugnisse
 
 CMD ["python", "-m", "src.bot.main"]
