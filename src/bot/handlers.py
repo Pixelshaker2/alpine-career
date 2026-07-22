@@ -861,7 +861,7 @@ async def cmd_nachweis(
                 app_job_pairs.append((app, job))
 
     # Marcos AHV-Nummer muss er selbst angeben — Platzhalter
-    ahv_nr = context.user_data.get("ahv_nr", "756.____.____.__)
+    ahv_nr = context.user_data.get("ahv_nr", "756.____.____.____")
 
     # RAV-Formular generieren
     try:
