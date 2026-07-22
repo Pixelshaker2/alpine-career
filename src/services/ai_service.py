@@ -86,17 +86,29 @@ gefolgt vom Inhalt. Trenne Abschnitte mit einer Leerzeile.
 """
 
 COVER_LETTER_SYSTEM_PROMPT = """\
-Du bist ein erfahrener Karriereberater, der professionelle Bewerbungsanschreiben \
-fuer den deutschsprachigen IT-Arbeitsmarkt verfasst.
+Du bist ein erfahrener Karriereberater, der Bewerbungsanschreiben \
+fuer den deutschsprachigen IT-Arbeitsmarkt verfasst. Dein Ziel: \
+Das Anschreiben soll klingen, als haette es ein Mensch geschrieben — \
+nicht eine KI.
 
-Regeln:
+Stil-Regeln:
 - Schweizer Schreibweise: Kein Eszett (ss). Immer «ss» statt «ss».
-- Formelles «Sie», professioneller aber nicht steifer Ton.
-- Maximal eine Seite (ca. 300-400 Woerter).
-- Kein Floskeln wie «hiermit bewerbe ich mich». Stattdessen mit einem \
-  starken Einstieg beginnen.
-- Konkrete Bezuege zur Stelle und zum Unternehmen herstellen.
-- Motivation und Mehrwert fuer das Unternehmen zeigen.
+- Formelles «Sie», aber natuerlicher, warmer Ton — wie ein Brief, \
+  den ein selbstbewusster Fachmann tatsaechlich schreiben wuerde.
+- Maximal eine Seite (ca. 250-350 Woerter). Lieber kuerzer und praegnant.
+- VERBOTEN: «hiermit bewerbe ich mich», «mit grossem Interesse», \
+  «ich bin ueberzeugt», «ich freue mich auf», «in Ihrem Unternehmen», \
+  «spannende Herausforderung», «wertvoller Beitrag», «dynamisches Team», \
+  «gewinnbringend einbringen». Diese Floskeln verraten sofort KI-Texte.
+- Stattdessen: Konkreter Einstieg — warum genau diese Stelle, was der \
+  Bewerber dort konkret besser machen kann als andere.
+- Satzlaenge variieren: Kurze Saetze neben laengeren. Nicht jeder Satz \
+  gleich lang. Mal ein Einwortsatz. Mal ein Nebensatz.
+- Persoenliche Note: Ein konkretes Detail, eine kleine Anekdote, oder \
+  ein Bezug zur eigenen Erfahrung — etwas, das nur ein Mensch schreiben wuerde.
+- Keine Aufzaehlungslisten im Anschreiben. Fliesstext.
+- Nicht alles positiv formulieren. Ein ehrlicher Satz wie «Das Thema X \
+  ist fuer mich Neuland, aber...» wirkt authentischer als Perfektion.
 - Verfuegbarkeit und Gehaltsvorstellung nur erwaehnen wenn explizit verlangt.
 """
 
@@ -277,11 +289,87 @@ async def generate_cover_letter(
     # Betreff und Text parsen
     subject, body = _parse_cover_letter(full_text)
 
+    # Humanizer-Pass: Text natuerlicher machen
+    body = await humanize_text(body)
+
     return GeneratedCoverLetter(
         subject=subject,
         body=body,
-        full_text=full_text,
+        full_text=f"BETREFF: {subject}\n\nANSCHREIBEN:\n{body}",
     )
+
+
+HUMANIZER_SYSTEM_PROMPT = """\
+Du bist ein Lektor, der KI-generierte Bewerbungsanschreiben so ueberarbeitet, \
+dass sie nicht mehr als KI-Text erkennbar sind. Du aenderst den INHALT nicht — \
+nur den Stil.
+
+Deine Eingriffe:
+1. FLOSKELN ERSETZEN: Ersetze generische Formulierungen durch konkretere. \
+   «Ich bringe umfangreiche Erfahrung mit» → «In 6 Jahren bei JLS Digital \
+   habe ich...». Jeder Satz muss eine konkrete Information transportieren.
+2. SATZRHYTHMUS BRECHEN: KI schreibt gleichmaessig lange Saetze. Brich das \
+   auf. Kurz. Dann wieder laenger mit einem Nebensatz, der den Gedanken weiter \
+   ausfuehrt. Variation ist menschlich.
+3. UEBERGAENGE VARIIEREN: Nicht jeder Absatz beginnt mit «Ich». Manchmal \
+   mit dem Unternehmen, manchmal mit einer Beobachtung, manchmal direkt \
+   mit der Sache.
+4. EINE ECKE LASSEN: Perfekte Texte sind verdaechtig. Lass eine leicht \
+   unkonventionelle Formulierung stehen oder baue eine ein — etwas, das \
+   ein Mensch so formulieren wuerde, eine KI aber nicht.
+5. REDUNDANZ ENTFERNEN: KI wiederholt sich gerne in anderen Worten. \
+   Streiche Saetze die dasselbe nochmal sagen.
+
+Regeln:
+- Schweizer Schreibweise: Kein Eszett (ss). Immer «ss» statt «ss».
+- Laenge NICHT erhoehen — eher etwas kuerzen.
+- Keine neuen Fakten erfinden.
+- Ausgabe: NUR der ueberarbeitete Text, keine Kommentare.
+"""
+
+
+async def humanize_text(text: str) -> str:
+    """Run a second Claude pass to humanize AI-generated text.
+
+    Takes a cover letter or similar text and rewrites it to sound
+    more naturally human-written while preserving the content.
+
+    Args:
+        text: The AI-generated text to humanize.
+
+    Returns:
+        Humanized version of the text.
+    """
+    import asyncio
+
+    client = _get_client()
+
+    response = await asyncio.to_thread(
+        client.messages.create,
+        model=settings.anthropic_model,
+        max_tokens=settings.anthropic_max_tokens,
+        system=HUMANIZER_SYSTEM_PROMPT,
+        messages=[{
+            "role": "user",
+            "content": (
+                "Ueberarbeite dieses Bewerbungsanschreiben, damit es "
+                "natuerlicher und menschlicher klingt:\n\n"
+                f"{text}"
+            ),
+        }],
+    )
+
+    result = response.content[0].text
+    logger.info(
+        "Text humanized",
+        extra={
+            "tokens_in": response.usage.input_tokens,
+            "tokens_out": response.usage.output_tokens,
+            "original_len": len(text),
+            "humanized_len": len(result),
+        },
+    )
+    return result
 
 
 def _parse_cv_sections(text: str) -> dict[str, str]:
