@@ -107,13 +107,21 @@ def register_scheduled_jobs(app) -> None:
         logger.warning("JobQueue not available — scheduled tasks disabled")
         return
 
-    # Taegliche Suche um 07:00 UTC (08:00 CET / 09:00 CEST)
+    # Zwei Suchlaeufe pro Tag
     from datetime import time
 
+    # Morgens 07:00 UTC (08:00 CET / 09:00 CEST)
     job_queue.run_daily(
         daily_job_search,
         time=time(hour=7, minute=0),
-        name="daily_job_search",
+        name="daily_job_search_morning",
     )
 
-    logger.info("Scheduled jobs registered: daily_job_search at 07:00 UTC")
+    # Nachmittags 14:00 UTC (15:00 CET / 16:00 CEST)
+    job_queue.run_daily(
+        daily_job_search,
+        time=time(hour=14, minute=0),
+        name="daily_job_search_afternoon",
+    )
+
+    logger.info("Scheduled jobs registered: 07:00 + 14:00 UTC")
