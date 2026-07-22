@@ -5,6 +5,9 @@ Sources:
 - SwissDevJobs.ch — JSON API, Swiss IT jobs with salary
 - Berlin Startup Jobs — HTML scraping, Berlin startup scene
 - CH Media Portals — HTML scraping (zentraljob.ch, jobzueri.ch, jobbern.ch, jobbasel.ch)
+- Powerkombi.ch — HTML scraping, Zentralschweiz (Titel-basiert, IT-gefiltert)
+- jobportalschweiz.ch — HTML scraping, ganze CH, IT & Betrieb + Software Engineering
+- ictjobs.ch + medienjobs.ch — HTML scraping, CH-weit, IT + Digital/Media
 
 All sources run concurrently. Results are deduplicated by external_id.
 """
@@ -14,7 +17,10 @@ import logging
 
 from src.services.scrapers.base import ScrapedJob
 from src.services.scrapers.berlin_startups_scraper import search_berlin_startups
+from src.services.scrapers.jobportalschweiz_scraper import search_jobportalschweiz
 from src.services.scrapers.jobspy_scraper import search_jobspy
+from src.services.scrapers.medienjobs_scraper import search_medienjobs
+from src.services.scrapers.powerkombi_scraper import search_powerkombi
 from src.services.scrapers.swissdevjobs_scraper import search_swissdevjobs
 from src.services.scrapers.zentraljob_scraper import search_chmedia_portals
 
@@ -61,6 +67,24 @@ async def search_jobs(
             asyncio.create_task(
                 search_chmedia_portals(),
                 name="chmedia",
+            )
+        )
+        tasks.append(
+            asyncio.create_task(
+                search_powerkombi(),
+                name="powerkombi",
+            )
+        )
+        tasks.append(
+            asyncio.create_task(
+                search_jobportalschweiz(),
+                name="jobportalschweiz",
+            )
+        )
+        tasks.append(
+            asyncio.create_task(
+                search_medienjobs(),
+                name="medienjobs",
             )
         )
 

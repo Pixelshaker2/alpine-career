@@ -63,21 +63,27 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /help — list all commands."""
     help_text = (
         "📋 *Verfuegbare Befehle:*\n\n"
-        "/start — Begruessung\n"
-        "/help — Diese Uebersicht\n"
-        "/profil — Dein Profil anzeigen\n"
+        "*Jobsuche:*\n"
         "/suche — Stellensuche starten\n"
         "/suche berlin — Nur Berlin\n"
         "/suche schweiz — Nur Schweiz\n"
-        "/detail \\[id\\] — Stellendetails\n"
-        "/bewerben \\[id\\] — CV \\+ Anschreiben generieren\n"
-        "/vorschau \\[id\\] — PDFs anzeigen\n"
-        "/senden \\[id\\] — Bewerbung per Gmail senden\n"
+        "/detail \\[Nr\\] — Stellendetails\n\n"
+        "*Bewerbung:*\n"
+        "/bewerben \\[Nr\\] — CV \\+ Anschreiben generieren\n"
+        "/anpassen \\[Nr\\] \\[Feedback\\] — Neu generieren\n"
+        "/vorschau \\[Nr\\] — PDFs anzeigen\n"
+        "/email \\[Nr\\] \\[Adresse\\] — Empfaenger setzen\n"
+        "/senden \\[Nr\\] — Per Gmail versenden\n\n"
+        "*Tracking:*\n"
         "/bewerbungen — Alle Bewerbungen\n"
-        "/status \\[id\\] \\[s\\] — Status aendern\n"
-        "/stats — Statistik\n"
-        "/nachweis \\[monat\\] — RAV\\-Formular\n"
-        "/ahv \\[nr\\] — AHV\\-Nr\\. setzen\n"
+        "/status \\[Nr\\] \\[Status\\] — Status aendern\n"
+        "/stats — Statistik\n\n"
+        "*RAV:*\n"
+        "/nachweis \\[Monat\\] — RAV\\-Formular\n"
+        "/ahv \\[Nr\\] — AHV\\-Nr\\. setzen\n\n"
+        "*Sonstiges:*\n"
+        "/profil — Dein Profil\n"
+        "/help — Diese Uebersicht\n"
     )
     await update.message.reply_text(help_text, parse_mode="MarkdownV2")
 
@@ -377,15 +383,33 @@ async def cmd_bewerben(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     # Bewerbungs-ID in context speichern
     context.user_data.setdefault("applications", {})[nr] = str(application.id)
 
-    await update.message.reply_text(
-        f"✅ Bewerbung fuer «{job_title}» erstellt!\n\n"
-        f"📄 CV: optimiert und als PDF generiert\n"
-        f"✉️ Anschreiben: erstellt und als PDF generiert\n"
-        f"📧 Betreff: {application.email_subject}\n\n"
-        f"Naechste Schritte:\n"
-        f"  /vorschau {nr} — PDFs ansehen\n"
-        f"  /senden {nr} — Per Gmail versenden"
-    )
+    # email_to pruefen — falls nicht vorhanden, Marco fragen
+    if not application.email_to:
+        context.user_data["awaiting_email_for"] = {
+            "nr": nr,
+            "application_id": str(application.id),
+            "job_title": job_title,
+        }
+        await update.message.reply_text(
+            f"✅ Bewerbung fuer «{job_title}» erstellt!\n\n"
+            f"📄 CV: optimiert und als PDF generiert\n"
+            f"✉️ Anschreiben: erstellt und als PDF generiert\n"
+            f"📧 Betreff: {application.email_subject}\n\n"
+            f"📬 An welche E-Mail-Adresse soll die Bewerbung gehen?\n"
+            f"Schreib einfach die Adresse (z.B. hr@swisscom.com)\n"
+            f"oder /skip falls du sie spaeter angeben willst."
+        )
+    else:
+        await update.message.reply_text(
+            f"✅ Bewerbung fuer «{job_title}» erstellt!\n\n"
+            f"📄 CV: optimiert und als PDF generiert\n"
+            f"✉️ Anschreiben: erstellt und als PDF generiert\n"
+            f"📧 Betreff: {application.email_subject}\n"
+            f"📬 An: {application.email_to}\n\n"
+            f"Naechste Schritte:\n"
+            f"  /vorschau {nr} — PDFs ansehen\n"
+            f"  /senden {nr} — Per Gmail versenden"
+        )
 
 
 @restricted
@@ -912,6 +936,216 @@ async def cmd_ahv(
     ahv_nr = " ".join(context.args)
     context.user_data["ahv_nr"] = ahv_nr
     await update.message.reply_text(f"✅ AHV-Nr. gespeichert: {ahv_nr}")
+
+
+@restricted
+async def cmd_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /email [nr] [adresse] — set recipient email for application."""
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text(
+            "Format: /email 1 hr@firma.com"
+        )
+        return
+
+    nr = context.args[0]
+    email_addr = context.args[1].lower().strip()
+
+    if "@" not in email_addr or "." not in email_addr:
+        await update.message.reply_text("Ungueltige E-Mail-Adresse.")
+        return
+
+    app_map = context.user_data.get("applications", {})
+    search_map = context.user_data.get("last_search", {})
+
+    user = await _get_or_create_user(update)
+    if not user:
+        return
+
+    application = None
+    if nr in app_map:
+        async with async_session_factory() as session:
+            result = await session.execute(
+                select(Application).where(Application.id == app_map[nr])
+            )
+            application = result.scalar_one_or_none()
+    elif nr in search_map:
+        application = await get_application_by_job(
+            user.id, uuid_mod.UUID(search_map[nr])
+        )
+
+    if not application:
+        await update.message.reply_text(
+            f"Keine Bewerbung fuer Nr. {nr} gefunden."
+        )
+        return
+
+    async with async_session_factory() as session:
+        app = await session.get(Application, application.id)
+        app.email_to = email_addr
+        await session.commit()
+
+    await update.message.reply_text(
+        f"✅ Empfaenger gesetzt: {email_addr}\n\n"
+        f"Naechste Schritte:\n"
+        f"  /vorschau {nr} — PDFs ansehen\n"
+        f"  /senden {nr} — Per Gmail versenden"
+    )
+
+
+@restricted
+async def cmd_anpassen(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Handle /anpassen [nr] [feedback] — regenerate with feedback."""
+    if not context.args:
+        await update.message.reply_text(
+            "Format: /anpassen 1 formeller\n"
+            "oder: /anpassen 1 mehr Azure erwaehnen\n\n"
+            "Der Bot generiert CV und Anschreiben neu — "
+            "mit deinem Feedback beruecksichtigt."
+        )
+        return
+
+    nr = context.args[0]
+    feedback = " ".join(context.args[1:]) if len(context.args) > 1 else ""
+
+    if not feedback:
+        await update.message.reply_text(
+            "Was soll angepasst werden?\n"
+            "Beispiele:\n"
+            "  /anpassen 1 formeller\n"
+            "  /anpassen 1 mehr Cloud-Erfahrung betonen\n"
+            "  /anpassen 1 Anschreiben kuerzer"
+        )
+        return
+
+    search_map = context.user_data.get("last_search", {})
+    app_map = context.user_data.get("applications", {})
+
+    user = await _get_or_create_user(update)
+    if not user:
+        return
+
+    # Job-ID finden
+    job_id = None
+    application = None
+    if nr in app_map:
+        async with async_session_factory() as session:
+            result = await session.execute(
+                select(Application).where(Application.id == app_map[nr])
+            )
+            application = result.scalar_one_or_none()
+            if application:
+                job_id = application.job_id
+    elif nr in search_map:
+        job_id = uuid_mod.UUID(search_map[nr])
+        application = await get_application_by_job(user.id, job_id)
+
+    if not application or not job_id:
+        await update.message.reply_text(
+            f"Keine Bewerbung fuer Nr. {nr} gefunden.\n"
+            "Erstelle zuerst eine mit /bewerben."
+        )
+        return
+
+    # Alte email_to merken
+    old_email_to = application.email_to
+
+    await update.message.reply_text(
+        f"🔄 Generiere neu mit Feedback: «{feedback}»\n"
+        "Das dauert ca. 30–60 Sekunden..."
+    )
+
+    try:
+        # Alte Bewerbung loeschen
+        async with async_session_factory() as session:
+            app = await session.get(Application, application.id)
+            await session.delete(app)
+            await session.commit()
+
+        # Neu generieren mit Feedback im Service
+        from src.services.application_service import create_application_with_feedback
+
+        new_application = await create_application_with_feedback(
+            user_id=user.id,
+            job_id=job_id,
+            feedback=feedback,
+            email_to=old_email_to,
+        )
+    except Exception:
+        logger.exception("Regeneration failed")
+        await update.message.reply_text(
+            "❌ Fehler bei der Neugenerierung. Bitte versuche es nochmal."
+        )
+        return
+
+    # Neue ID speichern
+    context.user_data.setdefault("applications", {})[nr] = str(new_application.id)
+
+    async with async_session_factory() as session:
+        job = await session.get(Job, job_id)
+    job_title = job.title if job else "Stelle"
+
+    await update.message.reply_text(
+        f"✅ Bewerbung fuer «{job_title}» neu generiert!\n"
+        f"💬 Feedback beruecksichtigt: «{feedback}»\n\n"
+        f"  /vorschau {nr} — Neue PDFs ansehen\n"
+        f"  /senden {nr} — Per Gmail versenden"
+    )
+
+
+async def handle_text_message(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Handle free-text messages — check if we're awaiting an email address."""
+    awaiting = context.user_data.get("awaiting_email_for")
+
+    if awaiting:
+        text = update.message.text.strip().lower()
+
+        if text == "/skip":
+            context.user_data.pop("awaiting_email_for", None)
+            nr = awaiting["nr"]
+            await update.message.reply_text(
+                "Okay, du kannst die Adresse spaeter mit "
+                f"/email {nr} hr@firma.com setzen.\n\n"
+                f"  /vorschau {nr} — PDFs ansehen"
+            )
+            return
+
+        # E-Mail validieren
+        if "@" not in text or "." not in text:
+            await update.message.reply_text(
+                "Das sieht nicht nach einer E-Mail-Adresse aus.\n"
+                "Bitte nochmal eingeben oder /skip."
+            )
+            return
+
+        # E-Mail in DB speichern
+        application_id = awaiting["application_id"]
+        async with async_session_factory() as session:
+            app = await session.get(
+                Application, uuid_mod.UUID(application_id)
+            )
+            if app:
+                app.email_to = text
+                await session.commit()
+
+        nr = awaiting["nr"]
+        context.user_data.pop("awaiting_email_for", None)
+
+        await update.message.reply_text(
+            f"✅ Empfaenger: {text}\n\n"
+            f"Naechste Schritte:\n"
+            f"  /vorschau {nr} — PDFs ansehen\n"
+            f"  /senden {nr} — Per Gmail versenden"
+        )
+        return
+
+    # Kein spezieller State — normaler unbekannter Text
+    await update.message.reply_text(
+        "Ich verstehe nur Befehle. Tippe /help fuer alle Befehle."
+    )
 
 
 async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

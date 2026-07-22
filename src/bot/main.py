@@ -14,10 +14,12 @@ from telegram.ext import (
 
 from src.bot.handlers import (
     cmd_ahv,
+    cmd_anpassen,
     cmd_bewerben,
     cmd_bewerbungen,
     cmd_botstatus,
     cmd_detail,
+    cmd_email,
     cmd_help,
     cmd_nachweis,
     cmd_profil,
@@ -27,6 +29,7 @@ from src.bot.handlers import (
     cmd_status,
     cmd_suche,
     cmd_vorschau,
+    handle_text_message,
     handle_unknown,
 )
 from src.bot.scheduled import register_scheduled_jobs
@@ -97,9 +100,16 @@ def main() -> None:
     app.add_handler(CommandHandler("nachweis", cmd_nachweis))
     app.add_handler(CommandHandler("rav", cmd_nachweis))
     app.add_handler(CommandHandler("ahv", cmd_ahv))
+    app.add_handler(CommandHandler("email", cmd_email))
+    app.add_handler(CommandHandler("anpassen", cmd_anpassen))
 
     # Unknown commands
     app.add_handler(MessageHandler(filters.COMMAND, handle_unknown))
+
+    # Free-text messages (e.g. email address input)
+    app.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND, handle_text_message
+    ))
 
     # Global error handler
     async def error_handler(

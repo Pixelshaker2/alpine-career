@@ -158,6 +158,128 @@ async def create_application(
     return application
 
 
+async def create_application_with_feedback(
+    user_id: uuid.UUID,
+    job_id: uuid.UUID,
+    feedback: str,
+    email_to: str | None = None,
+) -> Application:
+    """Recreate application with user feedback incorporated.
+
+    Same as create_application but adds feedback to the AI prompts.
+
+    Args:
+        user_id: The applying user's ID.
+        job_id: The target job's ID.
+        feedback: User feedback like "formeller" or "mehr Azure".
+        email_to: Preserved recipient email from previous version.
+
+    Returns:
+        New Application record with regenerated PDFs.
+    """
+    # 1. Daten laden
+    async with async_session_factory() as session:
+        user = await session.get(User, user_id)
+        if not user:
+            raise ValueError("Nutzer nicht gefunden")
+
+        result = await session.execute(
+            select(Profile).where(Profile.user_id == user_id)
+        )
+        profile = result.scalar_one_or_none()
+        if not profile:
+            raise ValueError("Kein Profil hinterlegt")
+
+        job = await session.get(Job, job_id)
+        if not job:
+            raise ValueError("Stelle nicht gefunden")
+
+    # 2. CV optimieren mit Feedback
+    skills = profile.skills or {}
+    core_skills = skills.get("core", [])
+    target_roles = (profile.target_roles or {}).get("titles_de", [])
+    certs_in_progress = skills.get("certifications_in_progress", [])
+
+    # Feedback an die Job-Beschreibung anhaengen damit Claude es beruecksichtigt
+    enhanced_description = (
+        f"{job.description or ''}\n\n"
+        f"WICHTIG — Feedback vom Bewerber zur Anpassung:\n{feedback}"
+    )
+
+    logger.info(
+        "Regenerating CV with feedback",
+        extra={"job_id": str(job_id), "feedback": feedback},
+    )
+
+    cv = await optimize_cv(
+        cv_text=profile.raw_cv_text or "",
+        skills=core_skills,
+        target_roles=target_roles,
+        availability=profile.availability or "",
+        job_title=job.title,
+        job_company=job.company,
+        job_location=job.location,
+        job_description=enhanced_description,
+    )
+
+    # 3. Anschreiben mit Feedback
+    letter = await generate_cover_letter(
+        name=user.name,
+        skills=core_skills,
+        certs_in_progress=certs_in_progress,
+        cv_summary=cv.summary,
+        job_title=job.title,
+        job_company=job.company,
+        job_location=job.location,
+        job_description=enhanced_description,
+    )
+
+    # 4. PDFs rendern
+    cv_pdf = render_cv_pdf(
+        cv=cv,
+        name=user.name,
+        email=user.email,
+        phone="+41 79 876 38 81",
+        location="Berlin",
+    )
+
+    cover_letter_pdf = render_cover_letter_pdf(
+        letter=letter,
+        name=user.name,
+        email=user.email,
+        phone="+41 79 876 38 81",
+        sender_location="Berlin",
+        company=job.company,
+        company_location=job.location,
+    )
+
+    # 5. Neue Application speichern
+    async with async_session_factory() as session:
+        application = Application(
+            user_id=user_id,
+            job_id=job_id,
+            status="cv_generated",
+            cv_pdf=cv_pdf,
+            cover_letter_pdf=cover_letter_pdf,
+            email_subject=letter.subject,
+            email_body=letter.body,
+            email_to=email_to,
+        )
+        session.add(application)
+        await session.commit()
+        await session.refresh(application)
+
+    logger.info(
+        "Application regenerated with feedback",
+        extra={
+            "application_id": str(application.id),
+            "feedback": feedback,
+        },
+    )
+
+    return application
+
+
 async def get_application(
     user_id: uuid.UUID,
     application_id: uuid.UUID,

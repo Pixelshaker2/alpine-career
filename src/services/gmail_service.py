@@ -118,17 +118,13 @@ def _build_email(
     return raw
 
 
-EMAIL_BODY_TEMPLATE = """\
+EMAIL_BODY_FALLBACK = """\
 Sehr geehrte Damen und Herren,
 
 anbei erhalten Sie meine Bewerbungsunterlagen fuer die ausgeschriebene Position \
 als {job_title} bei {company}.
 
-Im Anhang finden Sie:
-- Meinen Lebenslauf
-- Mein Bewerbungsanschreiben
-
-{cover_letter_intro}
+Im Anhang finden Sie meinen Lebenslauf sowie mein Bewerbungsanschreiben.
 
 Ich freue mich auf Ihre Rueckmeldung.
 
@@ -171,13 +167,21 @@ async def send_application_email(
     job_title = job.title if job else "Fachkraft"
     company = job.company if job else "Ihr Unternehmen"
 
-    # E-Mail-Body
-    body = EMAIL_BODY_TEMPLATE.format(
-        job_title=job_title,
-        company=company,
-        cover_letter_intro=application.email_body[:200] if application.email_body else "",
-        name="Marco von Burg",
-    )
+    # E-Mail-Body: AI-generiertes Anschreiben verwenden, Fallback nur wenn leer
+    if application.email_body and len(application.email_body) > 50:
+        # Anschreiben als E-Mail-Text + Hinweis auf Anhaenge
+        body = (
+            f"{application.email_body}\n\n"
+            "---\n"
+            "Im Anhang finden Sie meinen Lebenslauf sowie das "
+            "Anschreiben als PDF.\n"
+        )
+    else:
+        body = EMAIL_BODY_FALLBACK.format(
+            job_title=job_title,
+            company=company,
+            name="Marco von Burg",
+        )
 
     subject = application.email_subject or f"Bewerbung als {job_title}"
 
