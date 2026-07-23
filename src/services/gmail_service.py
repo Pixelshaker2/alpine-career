@@ -262,20 +262,12 @@ async def send_application_email(
     job_title = job.title if job else "Fachkraft"
     company = job.company if job else "Ihr Unternehmen"
 
-    # E-Mail-Body: AI-generiertes Anschreiben verwenden, Fallback nur wenn leer
-    if application.email_body and len(application.email_body) > 50:
-        body = (
-            f"{application.email_body}\n\n"
-            "---\n"
-            "Im Anhang finden Sie meinen Lebenslauf sowie das "
-            "Anschreiben als PDF.\n"
-        )
-    else:
-        body = EMAIL_BODY_FALLBACK.format(
-            job_title=job_title,
-            company=company,
-            name=sender_name,
-        )
+    # E-Mail-Body: Kurze Begleitnotiz (Anschreiben ist als PDF im Anhang)
+    body = EMAIL_BODY_FALLBACK.format(
+        job_title=job_title,
+        company=company,
+        name=sender_name,
+    )
 
     subject = application.email_subject or f"Bewerbung als {job_title}"
 
