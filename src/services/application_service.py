@@ -72,7 +72,7 @@ def _load_lebenslauf_pdf(job_location: str) -> bytes:
         logger.info(
             "Lebenslauf-PDF geladen",
             extra={
-                "filename": pdf_file.name,
+                "pdf_name": pdf_file.name,
                 "size": pdf_file.stat().st_size,
                 "region": "CH" if is_swiss else "DE",
             },
