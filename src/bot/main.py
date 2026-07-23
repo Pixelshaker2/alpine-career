@@ -140,7 +140,14 @@ def main() -> None:
     )
 
     # Startup Health Check — kritische Services pruefen
-    asyncio.run(_startup_health_check(logger))
+    # Eigenen Event Loop verwenden und danach aufraeumen,
+    # damit run_polling() einen neuen erstellen kann.
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(_startup_health_check(logger))
+    finally:
+        loop.close()
+        asyncio.set_event_loop(asyncio.new_event_loop())
 
     app = ApplicationBuilder().token(settings.telegram_bot_token).build()
 
