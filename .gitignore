@@ -79,3 +79,7 @@ docker-volumes/
 credentials.json
 gmail_token.pickle
 *.pickle
+
+# Persoenliche Dokumente (Lebenslaeufe, Zeugnisse, Diplome)
+data/zeugnisse/
+data/*.pdf

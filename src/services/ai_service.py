@@ -95,7 +95,8 @@ Stil-Regeln:
 - Schweizer Schreibweise: Kein Eszett (ss). Immer «ss» statt «ss».
 - Formelles «Sie», aber natuerlicher, warmer Ton — wie ein Brief, \
   den ein selbstbewusster Fachmann tatsaechlich schreiben wuerde.
-- Maximal eine Seite (ca. 250-350 Woerter). Lieber kuerzer und praegnant.
+- KURZ: Maximal 150-200 Woerter. Drei bis vier Absaetze, nicht mehr. \
+  Kein Absatz laenger als 3-4 Saetze. Jeder Satz muss Mehrwert bringen.
 - VERBOTEN: «hiermit bewerbe ich mich», «mit grossem Interesse», \
   «ich bin ueberzeugt», «ich freue mich auf», «in Ihrem Unternehmen», \
   «spannende Herausforderung», «wertvoller Beitrag», «dynamisches Team», \
@@ -131,16 +132,17 @@ Erfahrung: 6+ Jahre (Swisscom-Tochter JLS Digital AG)
 Kernkompetenzen: {skills}
 Zertifizierungen in Arbeit: {certs_in_progress}
 
-## OPTIMIERTER LEBENSLAUF (ZUSAMMENFASSUNG)
+## LEBENSLAUF (ZUSAMMENFASSUNG)
 
 {cv_summary}
 
 ## AUFGABE
 
-Schreibe ein professionelles Bewerbungsanschreiben mit:
+Schreibe ein KURZES Bewerbungsanschreiben (maximal 150-200 Woerter) mit:
 
 1. BETREFF (eine praegnante Betreffzeile fuer die E-Mail)
-2. ANSCHREIBEN (der vollstaendige Brieftext)
+2. ANSCHREIBEN (der vollstaendige Brieftext — kurz und praegnant, \
+   3-4 Absaetze, kein Absatz laenger als 3-4 Saetze)
 
 Formatiere so:
 BETREFF: [Betreffzeile]
@@ -322,7 +324,8 @@ Deine Eingriffe:
 
 Regeln:
 - Schweizer Schreibweise: Kein Eszett (ss). Immer «ss» statt «ss».
-- Laenge NICHT erhoehen — eher etwas kuerzen.
+- Laenge NICHT erhoehen — aktiv kuerzen auf maximal 150-200 Woerter. \
+  Alles Ueberflüssige streichen.
 - Keine neuen Fakten erfinden.
 - Ausgabe: NUR der ueberarbeitete Text, keine Kommentare.
 """

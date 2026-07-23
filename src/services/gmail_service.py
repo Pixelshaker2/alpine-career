@@ -92,15 +92,14 @@ def _is_swiss_job(location: str) -> bool:
 
 
 def _load_zeugnisse(job_location: str = "") -> list[tuple[str, bytes]]:
-    """Load PDF files from the Zeugnisse directory, filtered by region.
+    """Load Arbeitszeugnisse PDFs from the Zeugnisse directory.
 
-    Lebenslaeufe werden regional gefiltert:
-    - CH-Jobs: nur Lebenslauf_*_CH*.pdf
-    - DE-Jobs: nur Lebenslauf_*_DE*.pdf
-    Arbeitszeugnisse werden immer angehaengt.
+    Lebenslaeufe werden NICHT geladen — sie werden separat als
+    CV-Anhang von application_service.py behandelt.
+    Nur Arbeitszeugnisse, Diplome und Zertifikate werden hier geladen.
 
     Args:
-        job_location: Job-Standort fuer regionale Filterung.
+        job_location: Job-Standort (nicht mehr fuer Filterung benoetigt).
 
     Returns:
         List of (filename, pdf_bytes) tuples.
@@ -109,22 +108,17 @@ def _load_zeugnisse(job_location: str = "") -> list[tuple[str, bytes]]:
         logger.info("Kein Zeugnisse-Verzeichnis vorhanden")
         return []
 
-    is_swiss = _is_swiss_job(job_location) if job_location else True
-
     zeugnisse: list[tuple[str, bytes]] = []
     for pdf_file in sorted(ZEUGNISSE_DIR.glob("*.pdf")):
         name_lower = pdf_file.name.lower()
 
-        # Lebenslauf regional filtern
+        # Lebenslauf ueberspringen — wird separat als CV angehaengt
         if "lebenslauf" in name_lower:
-            if is_swiss and "_de" in name_lower:
-                logger.info("Lebenslauf uebersprungen (DE fuer CH-Job)",
-                            extra={"filename": pdf_file.name})
-                continue
-            if not is_swiss and "_ch" in name_lower:
-                logger.info("Lebenslauf uebersprungen (CH fuer DE-Job)",
-                            extra={"filename": pdf_file.name})
-                continue
+            logger.info(
+                "Lebenslauf uebersprungen (wird separat angehaengt)",
+                extra={"filename": pdf_file.name},
+            )
+            continue
 
         try:
             zeugnisse.append((pdf_file.name, pdf_file.read_bytes()))
@@ -167,9 +161,9 @@ def _build_email(
     # E-Mail-Body
     msg.attach(MIMEText(body, "plain", "utf-8"))
 
-    # CV als Anhang
+    # Lebenslauf als Anhang (hochgeladenes Original-PDF)
     cv_attachment = MIMEApplication(cv_pdf, _subtype="pdf")
-    cv_filename = f"CV_{applicant_name.replace(' ', '_')}.pdf"
+    cv_filename = f"Lebenslauf_{applicant_name.replace(' ', '_')}.pdf"
     cv_attachment.add_header(
         "Content-Disposition", "attachment", filename=cv_filename
     )
