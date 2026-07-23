@@ -116,7 +116,7 @@ def _load_zeugnisse(job_location: str = "") -> list[tuple[str, bytes]]:
         if "lebenslauf" in name_lower:
             logger.info(
                 "Lebenslauf uebersprungen (wird separat angehaengt)",
-                extra={"filename": pdf_file.name},
+                extra={"pdf_name": pdf_file.name},
             )
             continue
 
@@ -124,12 +124,12 @@ def _load_zeugnisse(job_location: str = "") -> list[tuple[str, bytes]]:
             zeugnisse.append((pdf_file.name, pdf_file.read_bytes()))
             logger.info(
                 "Zeugnis geladen",
-                extra={"filename": pdf_file.name, "size": pdf_file.stat().st_size},
+                extra={"pdf_name": pdf_file.name, "size": pdf_file.stat().st_size},
             )
         except Exception as exc:
             logger.error(
                 "Zeugnis konnte nicht geladen werden",
-                extra={"filename": pdf_file.name, "error": str(exc)},
+                extra={"pdf_name": pdf_file.name, "error": str(exc)},
             )
 
     return zeugnisse
