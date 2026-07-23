@@ -79,8 +79,28 @@ def _get_gmail_service():
 ZEUGNISSE_DIR = Path("/app/data/zeugnisse")
 
 
-def _load_zeugnisse() -> list[tuple[str, bytes]]:
-    """Load all PDF files from the Zeugnisse directory.
+def _is_swiss_job(location: str) -> bool:
+    """Determine if a job is in Switzerland based on location string."""
+    ch_markers = [
+        "zürich", "zurich", "zuerich", "bern", "basel", "luzern", "lucerne",
+        "schweiz", "switzerland", "swiss", "genf", "geneva", "lausanne",
+        "winterthur", "st. gallen", "st.gallen", "aargau", "solothurn",
+        "zug", "thun", "aarau", "schaffhausen", "chur", "baden",
+    ]
+    loc_lower = location.lower()
+    return any(marker in loc_lower for marker in ch_markers)
+
+
+def _load_zeugnisse(job_location: str = "") -> list[tuple[str, bytes]]:
+    """Load PDF files from the Zeugnisse directory, filtered by region.
+
+    Lebenslaeufe werden regional gefiltert:
+    - CH-Jobs: nur Lebenslauf_*_CH*.pdf
+    - DE-Jobs: nur Lebenslauf_*_DE*.pdf
+    Arbeitszeugnisse werden immer angehaengt.
+
+    Args:
+        job_location: Job-Standort fuer regionale Filterung.
 
     Returns:
         List of (filename, pdf_bytes) tuples.
@@ -89,8 +109,23 @@ def _load_zeugnisse() -> list[tuple[str, bytes]]:
         logger.info("Kein Zeugnisse-Verzeichnis vorhanden")
         return []
 
+    is_swiss = _is_swiss_job(job_location) if job_location else True
+
     zeugnisse: list[tuple[str, bytes]] = []
     for pdf_file in sorted(ZEUGNISSE_DIR.glob("*.pdf")):
+        name_lower = pdf_file.name.lower()
+
+        # Lebenslauf regional filtern
+        if "lebenslauf" in name_lower:
+            if is_swiss and "_de" in name_lower:
+                logger.info("Lebenslauf uebersprungen (DE fuer CH-Job)",
+                            extra={"filename": pdf_file.name})
+                continue
+            if not is_swiss and "_ch" in name_lower:
+                logger.info("Lebenslauf uebersprungen (CH fuer DE-Job)",
+                            extra={"filename": pdf_file.name})
+                continue
+
         try:
             zeugnisse.append((pdf_file.name, pdf_file.read_bytes()))
             logger.info(
@@ -115,10 +150,11 @@ def _build_email(
     cover_letter_pdf: bytes,
     applicant_name: str,
     company: str,
+    job_location: str = "",
 ) -> str:
     """Build a MIME email with PDF attachments.
 
-    Attaches: CV, Anschreiben, plus all PDFs from /app/data/zeugnisse/.
+    Attaches: CV, Anschreiben, plus region-filtered PDFs from /app/data/zeugnisse/.
 
     Returns:
         Base64url-encoded email string for Gmail API.
@@ -147,8 +183,8 @@ def _build_email(
     )
     msg.attach(letter_attachment)
 
-    # Zeugnisse, Diplome, Zertifikate aus dem Zeugnisse-Ordner
-    zeugnisse = _load_zeugnisse()
+    # Zeugnisse, Diplome, Zertifikate — regional gefiltert
+    zeugnisse = _load_zeugnisse(job_location=job_location)
     for filename, pdf_bytes in zeugnisse:
         zeugnis_attachment = MIMEApplication(pdf_bytes, _subtype="pdf")
         zeugnis_attachment.add_header(
@@ -249,6 +285,8 @@ async def send_application_email(
 
     subject = application.email_subject or f"Bewerbung als {job_title}"
 
+    job_location = job.location if job else ""
+
     raw_email = _build_email(
         sender=sender_email,
         to=recipient,
@@ -258,6 +296,7 @@ async def send_application_email(
         cover_letter_pdf=application.cover_letter_pdf,
         applicant_name=sender_name,
         company=company,
+        job_location=job_location,
     )
 
     # Gmail API aufrufen (synchron → Thread)
