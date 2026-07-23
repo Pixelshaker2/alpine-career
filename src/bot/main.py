@@ -65,36 +65,43 @@ def configure_logging() -> None:
     logging.basicConfig(level=log_level, format="%(message)s")
 
 
-async def _startup_health_check(logger: structlog.stdlib.BoundLogger) -> None:
+def _startup_health_check(logger: structlog.stdlib.BoundLogger) -> None:
     """Verify critical services are reachable before starting polling.
 
-    Checks: PostgreSQL, Redis, Claude API key, Gmail token.
-    Logs warnings for non-critical failures, raises SystemExit for critical ones.
+    Runs synchronously to avoid initializing the async DB engine
+    on a separate event loop (which breaks run_polling).
     """
-    # 1. Datenbank
-    try:
-        from src.core.database import async_session_factory
-        from sqlalchemy import text
+    from pathlib import Path
 
-        async with async_session_factory() as session:
-            await session.execute(text("SELECT 1"))
+    # 1. Datenbank — synchroner Check mit psycopg2
+    try:
+        from sqlalchemy import create_engine, text
+
+        sync_url = settings.database_url.replace(
+            "postgresql+asyncpg", "postgresql+psycopg2"
+        )
+        sync_engine = create_engine(sync_url)
+        with sync_engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        sync_engine.dispose()
         logger.info("Startup-Check: PostgreSQL OK")
     except Exception as exc:
         logger.error("Startup-Check: PostgreSQL FEHLGESCHLAGEN", error=str(exc))
         raise SystemExit(1)
 
-    # 2. Redis (nicht kritisch — Fallback auf direkte API-Calls)
+    # 2. Redis — synchroner Check
     try:
-        import redis.asyncio as aioredis
+        import redis
 
-        r = aioredis.from_url(settings.redis_url, decode_responses=True)
-        try:
-            await r.ping()
-            logger.info("Startup-Check: Redis OK")
-        finally:
-            await r.aclose()
+        r = redis.from_url(settings.redis_url)
+        r.ping()
+        r.close()
+        logger.info("Startup-Check: Redis OK")
     except Exception as exc:
-        logger.warning("Startup-Check: Redis nicht erreichbar (Fallback aktiv)", error=str(exc))
+        logger.warning(
+            "Startup-Check: Redis nicht erreichbar (Fallback aktiv)",
+            error=str(exc),
+        )
 
     # 3. Claude API Key
     if settings.anthropic_api_key:
@@ -103,9 +110,7 @@ async def _startup_health_check(logger: structlog.stdlib.BoundLogger) -> None:
         logger.error("Startup-Check: ANTHROPIC_API_KEY fehlt")
         raise SystemExit(1)
 
-    # 4. Gmail Token (nicht kritisch — Versand geht erst nach Auth)
-    from pathlib import Path
-
+    # 4. Gmail Token (nicht kritisch)
     token_path = Path("/app/data/gmail_token.pickle")
     if token_path.exists():
         logger.info("Startup-Check: Gmail Token vorhanden")
@@ -139,15 +144,9 @@ def main() -> None:
         allowed_users=settings.allowed_usernames_list,
     )
 
-    # Startup Health Check — kritische Services pruefen
-    # Eigenen Event Loop verwenden und danach aufraeumen,
-    # damit run_polling() einen neuen erstellen kann.
-    loop = asyncio.new_event_loop()
-    try:
-        loop.run_until_complete(_startup_health_check(logger))
-    finally:
-        loop.close()
-        asyncio.set_event_loop(asyncio.new_event_loop())
+    # Startup Health Check — synchron, damit der async DB-Engine
+    # erst im Bot-Event-Loop initialisiert wird
+    _startup_health_check(logger)
 
     app = ApplicationBuilder().token(settings.telegram_bot_token).build()
 
